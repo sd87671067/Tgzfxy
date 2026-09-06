@@ -1,0 +1,19 @@
+services:
+  sbbot:
+    build: .
+    container_name: sbbot
+    restart: "on-failure:3"
+    env_file:
+      - .env
+    network_mode: host
+    pid: host
+    privileged: true
+    volumes:
+      - ${SINGBOX_CONFIG_DIR:-/etc/sing-box}:/config
+      - ./data:/data
+      - ${CERTS_DIR:-/root/certs}:${CERTS_DIR:-/root/certs}:ro
+    logging:
+      driver: local
+      options:
+        max-size: "5m"
+        max-file: "2"

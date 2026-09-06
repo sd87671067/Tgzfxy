@@ -1,0 +1,12 @@
+*
+!.gitignore
+!.dockerignore
+!.env.example
+!app.py
+!forwarder.py
+!maintenance.py
+!Dockerfile
+!docker-compose.yml
+!requirements.txt
+!README.md
+!test_*.py

@@ -1,0 +1,4 @@
+aiohttp==3.12.15
+cryptography>=42
+python-telegram-bot==22.3
+Telethon==1.44.0
