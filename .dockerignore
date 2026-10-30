@@ -1,6 +1,8 @@
 *
-!app.py
-!forwarder.py
-!maintenance.py
-!requirements.txt
+!go.mod
+!go.sum
 !Dockerfile
+!cmd/
+!cmd/**
+!internal/
+!internal/**
