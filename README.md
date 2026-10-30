@@ -104,3 +104,5 @@ SING_BOX_BINARY=/usr/local/bin/sing-box go test ./internal/sbbot
 
 测试会访问 REALITY 握手目标 `www.samsung.com:443` 和 HTTPS IP 探测站，网络不可达会导致失败。
 可选 `SBBOT_MAPPING_FIXTURE` 仅用于读取私有配置、验证迁移映射和候选 check，绝不安装或启动该候选。
+
+Behind HAProxy, set `UNIFIED_PUBLIC_PORT=443` so `/share` uses the public port for unified users. Legacy listener links retain their own ports.

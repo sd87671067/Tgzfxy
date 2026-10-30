@@ -404,3 +404,33 @@ func TestLegacyCreatorRejectsReservedUnifiedPrefix(t *testing.T) {
 		t.Fatal("legacy rejection mutated config")
 	}
 }
+
+func TestUnifiedPublicPortPreservesLegacyLinks(t *testing.T) {
+	d := unifiedDoc(t)
+	users := UnifiedUsers(d)
+	var legacy string
+	for _, raw := range list(d["inbounds"]) {
+		if !isUnified(obj(raw)) && str(obj(raw)["type"]) == "vless" {
+			legacy = str(obj(raw)["tag"])
+			break
+		}
+	}
+	old, err := ShareLinks(d, []string{legacy}, "example.org", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	links, err := ShareLinks(d, []string{users[0].Key, legacy}, "example.org", "", 443)
+	if err != nil || len(links) != 2 {
+		t.Fatal(err)
+	}
+	parsed, err := ParseOutbound(links[0])
+	if err != nil || integer(parsed["server_port"]) != 443 {
+		t.Fatal("public port missing")
+	}
+	if links[1] != old[0] {
+		t.Fatal("legacy link changed")
+	}
+	if _, err := ShareLinks(d, []string{users[0].Key}, "example.org", "", 65536); err == nil {
+		t.Fatal("invalid port accepted")
+	}
+}

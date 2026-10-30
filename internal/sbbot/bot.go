@@ -428,7 +428,7 @@ func (b *Bot) command(ctx context.Context, m tg.Message, cmd string, args []stri
 		if len(args) == 0 {
 			return reply("用法：/share <tag1> [tag2 ...]")
 		}
-		links, err := ShareLinks(d, args, b.Host, b.Config.Domain)
+		links, err := ShareLinks(d, args, b.Host, b.Config.Domain, b.Config.UnifiedPublicPort)
 		if err != nil {
 			return err
 		}
@@ -485,7 +485,7 @@ func (b *Bot) command(ctx context.Context, m tg.Message, cmd string, args []stri
 		if err = b.Store.Log(ctx, actor, cmd, args[0]); err != nil {
 			return err
 		}
-		links, err := ShareLinks(d, []string{args[0]}, b.Host, b.Config.Domain)
+		links, err := ShareLinks(d, []string{args[0]}, b.Host, b.Config.Domain, b.Config.UnifiedPublicPort)
 		if err != nil {
 			return err
 		}

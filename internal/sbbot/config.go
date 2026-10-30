@@ -451,7 +451,7 @@ func PublicKey(private string) (string, error) {
 	}
 	return base64.RawURLEncoding.EncodeToString(k.PublicKey().Bytes()), nil
 }
-func ShareLinks(d Doc, tags []string, host, domain string) ([]string, error) {
+func ShareLinks(d Doc, tags []string, host, domain string, unifiedPort ...int) ([]string, error) {
 	var links []string
 	var expanded []string
 	for _, tag := range tags {
@@ -540,7 +540,14 @@ func ShareLinks(d Doc, tags []string, host, domain string) ([]string, error) {
 		} else {
 			return nil, fmt.Errorf("%s 类型暂不支持", tag)
 		}
-		address := net.JoinHostPort(host, str(in["listen_port"]))
+		port := str(in["listen_port"])
+		if scoped && len(unifiedPort) > 0 && unifiedPort[0] != 0 {
+			if unifiedPort[0] < 1 || unifiedPort[0] > 65535 {
+				return nil, errors.New("统一入口公开端口无效")
+			}
+			port = strconv.Itoa(unifiedPort[0])
+		}
+		address := net.JoinHostPort(host, port)
 		u := url.URL{Scheme: kind, User: url.User(auth), Host: address, Path: path, RawQuery: params.Encode(), Fragment: tag}
 		links = append(links, u.String())
 	}
@@ -549,6 +556,7 @@ func ShareLinks(d Doc, tags []string, host, domain string) ([]string, error) {
 
 type ConfigManager struct {
 	Path, Domain, Cert, Key, SNI string
+	UnifiedPublicPort            int
 	AutoRestart                  bool
 	Run                          func(context.Context, string, ...string) (string, error)
 }
