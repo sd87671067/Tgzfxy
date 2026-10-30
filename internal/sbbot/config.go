@@ -660,6 +660,9 @@ func RandomPort(d Doc) (int, error) {
 	return 0, errors.New("无法找到空闲随机端口")
 }
 func (c *ConfigManager) AddInbound(ctx context.Context, d Doc, kind, tag, sni string) (Doc, error) {
+	if strings.HasPrefix(tag, UnifiedPrefix) {
+		return nil, errors.New("统一入口名称保留，请使用离线规划工具预置带默认拒绝规则的入口")
+	}
 	if !regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`).MatchString(tag) {
 		return nil, errors.New("tag 仅支持 1-64 位英文、数字、下划线和连字符")
 	}

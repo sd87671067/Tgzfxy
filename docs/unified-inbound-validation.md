@@ -9,7 +9,7 @@ base `aa3e00898fbac4cdd204fd4763951167f5c07d3d`, with Tgzfxy changes in a separa
 nested Git worktree. No go-emby application code or production license data was
 modified. Only Tgzfxy sources are committed to this repository.
 
-The targeted suite passed 25 top-level tests, including existing Bot and forwarding
+The targeted suite passed 26 top-level tests, including existing Bot and forwarding
 regressions. The real integration test used sing-box 1.13.15, fresh synthetic
 UUIDs/REALITY keys, loopback listeners, two mock SOCKS exits, a real HTTPS exit,
 and temporary SQLite. No Telegram messages were sent.

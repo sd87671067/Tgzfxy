@@ -392,3 +392,15 @@ func TestUnifiedValidationRejectsBypassesAndBadAliases(t *testing.T) {
 		})
 	}
 }
+
+func TestLegacyCreatorRejectsReservedUnifiedPrefix(t *testing.T) {
+	c := ConfigManager{}
+	before := configVersion(testDoc())
+	d := testDoc()
+	if _, err := c.AddInbound(context.Background(), d, "vless", "sbbot-unified-bypass", ""); err == nil {
+		t.Fatal("legacy creator accepted reserved unified tag")
+	}
+	if configVersion(d) != before {
+		t.Fatal("legacy rejection mutated config")
+	}
+}
