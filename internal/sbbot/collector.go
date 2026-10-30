@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 	"time"
 )
@@ -17,8 +18,9 @@ func (b *Bot) enforce(ctx context.Context, d Doc) error {
 	if err != nil {
 		return err
 	}
+	version := configVersion(d)
 	current := Blocked(d)
-	for _, v := range list(d["inbounds"]) {
+	for _, v := range accountingInbounds(d) {
 		tag := str(obj(v)["tag"])
 		lim, err := b.Store.Limit(ctx, tag)
 		if err != nil {
@@ -32,10 +34,22 @@ func (b *Bot) enforce(ctx context.Context, d Doc) error {
 			target[tag] = true
 		}
 	}
-	if maps.Equal(current, target) && (len(target) == 0 || Kind(d, ManagedBlock) == "outbound") {
+	links, err := b.Store.LegacyLinks(ctx)
+	if err != nil {
+		return err
+	}
+	for key, legacy := range links {
+		if _, ok := findUser(d, key); ok && target[key] {
+			target[legacy] = true
+		}
+	}
+	if maps.Equal(current, target) && (len(target) == 0 || len(UnifiedUsers(d)) > 0 || Kind(d, ManagedBlock) == "outbound") {
 		return nil
 	}
 	SetBlockedDoc(d, target)
+	if len(UnifiedUsers(d)) > 0 {
+		return b.Config.applyUnifiedVersion(ctx, d, version)
+	}
 	return b.Config.Apply(ctx, d, nil)
 }
 func (b *Bot) Collect(ctx context.Context) error {
@@ -108,31 +122,37 @@ func (b *Bot) Daily(ctx context.Context, hour int) error {
 		return err
 	}
 	valid := map[string]bool{}
-	for _, v := range list(d["inbounds"]) {
+	reporting, err := b.reportingInbounds(ctx, d)
+	if err != nil {
+		return err
+	}
+	for _, v := range reporting {
 		valid[str(obj(v)["tag"])] = true
 	}
-	rows, err := b.Store.DB.QueryContext(ctx, "SELECT tag,SUM(bytes) FROM samples WHERE ts>=? AND ts<? GROUP BY tag ORDER BY SUM(bytes) DESC", start.Unix(), Day(now).Unix())
+	used, err := b.Store.UsageRange(ctx, start, Day(now))
 	if err != nil {
 		return err
 	}
 	lines := []string{"📅 昨日流量报告（" + key + " 00:00-24:00）"}
 	var total int64
-	for rows.Next() {
-		var tag string
-		var n int64
-		if err = rows.Scan(&tag, &n); err != nil {
-			rows.Close()
-			return err
-		}
+	var keys []string
+	for tag := range used {
 		if valid[tag] {
-			total += n
-			lines = append(lines, tag+"："+Human(n))
+			keys = append(keys, tag)
 		}
 	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return err
+	slices.SortFunc(keys, func(a, c string) int {
+		if used[a] > used[c] {
+			return -1
+		}
+		if used[a] < used[c] {
+			return 1
+		}
+		return strings.Compare(a, c)
+	})
+	for _, tag := range keys {
+		total += used[tag]
+		lines = append(lines, tag+"："+Human(used[tag]))
 	}
 	lines = append(lines, "合计："+Human(total))
 	for admin := range b.Admins {

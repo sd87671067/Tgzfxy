@@ -93,6 +93,11 @@ func Bind(d Doc, first, second string) error {
 	if a != "inbound" || b != "outbound" {
 		return errors.New("必须选择一个入站 tag 和一个出站 tag")
 	}
+	for _, raw := range list(d["inbounds"]) {
+		if str(obj(raw)["tag"]) == first && isUnified(obj(raw)) {
+			return errors.New("统一入口请使用 UUID 用户绑定")
+		}
+	}
 	route := nested(d, "route")
 	var blocks, remaining []any
 	for _, raw := range list(route["rules"]) {
@@ -119,8 +124,22 @@ func Delete(d Doc, kind, tag string) (Doc, error) {
 	if kind != "inbound" && kind != "outbound" {
 		return nil, errors.New("类型必须是 inbound 或 outbound")
 	}
-	if kind == "outbound" && (tag == "direct" || tag == ManagedBlock) {
+	if kind == "outbound" && (tag == "direct" || tag == ManagedBlock || managedUserOutbound(tag)) {
 		return nil, errors.New("系统出站 direct/block 不允许删除")
+	}
+	if kind == "outbound" {
+		for _, u := range UnifiedUsers(d) {
+			if u.Outbound == tag {
+				return nil, errors.New("出站仍被统一用户引用，请先重新绑定")
+			}
+		}
+	}
+	if kind == "inbound" {
+		for _, u := range UnifiedUsers(d) {
+			if u.Inbound == tag {
+				return nil, errors.New("统一入口仍有用户，禁止整入口删除")
+			}
+		}
 	}
 	var target Doc
 	var kept []any
@@ -160,6 +179,13 @@ func Blocked(d Doc) map[string]bool {
 	out := map[string]bool{}
 	for _, v := range list(obj(d["route"])["rules"]) {
 		r := obj(v)
+		if str(r["action"]) == "reject" {
+			for _, u := range UnifiedUsers(d) {
+				if ruleForUser(r, u) {
+					out[u.Key] = true
+				}
+			}
+		}
 		if str(r["outbound"]) == ManagedBlock {
 			for _, t := range stringsOf(r["inbound"]) {
 				out[t] = true
@@ -169,26 +195,44 @@ func Blocked(d Doc) map[string]bool {
 	return out
 }
 func SetBlockedDoc(d Doc, tags map[string]bool) {
-	has := false
-	for _, v := range list(d["outbounds"]) {
-		has = has || str(obj(v)["tag"]) == ManagedBlock
-	}
-	if !has {
-		d["outbounds"] = append(list(d["outbounds"]), Doc{"type": "block", "tag": ManagedBlock})
-	}
 	route := nested(d, "route")
-	rules := []any{}
-	if len(tags) > 0 {
-		keys := []string{}
-		for t := range tags {
-			keys = append(keys, t)
+	var rules []any
+	var legacy []string
+	keys := []string{}
+	for key, blocked := range tags {
+		if blocked {
+			keys = append(keys, key)
 		}
-		slices.Sort(keys)
-		rules = append(rules, Doc{"inbound": keys, "outbound": ManagedBlock})
 	}
-	for _, v := range list(route["rules"]) {
-		if str(obj(v)["outbound"]) != ManagedBlock {
-			rules = append(rules, v)
+	slices.Sort(keys)
+	for _, key := range keys {
+		if u, ok := findUser(d, key); ok {
+			rules = append(rules, Doc{"inbound": []string{u.Inbound}, "auth_user": []string{u.Name}, "action": "reject"})
+		} else if !strings.HasPrefix(key, userPrefix) {
+			legacy = append(legacy, key)
+		}
+	}
+	if len(legacy) > 0 {
+		if Kind(d, ManagedBlock) == "" {
+			d["outbounds"] = append(list(d["outbounds"]), Doc{"type": "block", "tag": ManagedBlock})
+		}
+		rules = append(rules, Doc{"inbound": legacy, "outbound": ManagedBlock})
+	}
+	for _, raw := range list(route["rules"]) {
+		r := obj(raw)
+		if str(r["outbound"]) == ManagedBlock {
+			continue
+		}
+		pause := false
+		if str(r["action"]) == "reject" {
+			for _, u := range UnifiedUsers(d) {
+				if ruleForUser(r, u) {
+					pause = true
+				}
+			}
+		}
+		if !pause {
+			rules = append(rules, raw)
 		}
 	}
 	route["rules"] = rules
@@ -409,10 +453,28 @@ func PublicKey(private string) (string, error) {
 }
 func ShareLinks(d Doc, tags []string, host, domain string) ([]string, error) {
 	var links []string
+	var expanded []string
 	for _, tag := range tags {
+		found := false
+		for _, u := range UnifiedUsers(d) {
+			if u.Inbound == tag {
+				expanded = append(expanded, u.Key)
+				found = true
+			}
+		}
+		if !found {
+			expanded = append(expanded, tag)
+		}
+	}
+	for _, tag := range expanded {
+		actual := tag
+		selected, scoped := findUser(d, tag)
+		if scoped {
+			actual = selected.Inbound
+		}
 		var in Doc
 		for _, v := range list(d["inbounds"]) {
-			if str(obj(v)["tag"]) == tag {
+			if str(obj(v)["tag"]) == actual {
 				in = obj(v)
 				break
 			}
@@ -421,6 +483,14 @@ func ShareLinks(d Doc, tags []string, host, domain string) ([]string, error) {
 			return nil, fmt.Errorf("%s 无效或无用户", tag)
 		}
 		user := obj(list(in["users"])[0])
+		if scoped {
+			for _, raw := range list(in["users"]) {
+				if str(obj(raw)["name"]) == selected.Name {
+					user = obj(raw)
+					break
+				}
+			}
+		}
 		tls := obj(in["tls"])
 		kind := str(in["type"])
 		sni := str(tls["server_name"])

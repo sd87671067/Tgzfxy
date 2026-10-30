@@ -20,7 +20,7 @@ func (b *Bot) selection(ctx context.Context, m tg.Message, d Doc, st *pending) e
 		row := []tg.Button{}
 		for _, v := range list(d[kind+"s"]) {
 			tag := str(obj(v)["tag"])
-			if tag == ManagedBlock || st.Mode == "delete" && tag == "direct" {
+			if managedUserOutbound(tag) || tag == ManagedBlock || st.Mode == "delete" && tag == "direct" {
 				continue
 			}
 			label := kind + ": " + tag
@@ -93,6 +93,9 @@ func (b *Bot) callback(ctx context.Context, m tg.Message, cb string, st *pending
 	d, err := Load(b.Config.Path)
 	if err != nil {
 		return err
+	}
+	if strings.HasPrefix(cb, "user:") {
+		return b.userCallback(ctx, m, d, cb, st)
 	}
 	if strings.HasPrefix(cb, "proto:list:") {
 		return b.protocols(ctx, m, d, int(integer(strings.TrimPrefix(cb, "proto:list:"))))

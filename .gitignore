@@ -4,6 +4,8 @@
 !.dockerignore
 !.env.example
 !README.md
+!docs/
+!docs/unified-inbound-validation.md
 !Dockerfile
 !docker-compose.yml
 !go.mod
