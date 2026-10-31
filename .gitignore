@@ -6,6 +6,7 @@
 !README.md
 !docs/
 !docs/unified-inbound-validation.md
+!docs/direct-users.md
 !Dockerfile
 !docker-compose.yml
 !go.mod

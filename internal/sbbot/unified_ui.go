@@ -13,18 +13,48 @@ import (
 
 func ref(s string) string { h := sha256.Sum256([]byte(s)); return fmt.Sprintf("%x", h[:8]) }
 func (b *Bot) userMenu(ctx context.Context, m tg.Message, d Doc, st *pending) error {
+	return b.userPage(ctx, m, d, st, 0, false)
+}
+
+const userPageSize = 8 // Same page size as the protocol menu.
+
+func (b *Bot) userPage(ctx context.Context, m tg.Message, d Doc, st *pending, page int, edit bool) error {
 	token, err := randomHex(8)
 	if err != nil {
 		return err
 	}
-	*st = pending{Mode: "users", Token: token, Version: configVersion(d), Until: time.Now().Add(5 * time.Minute), ChatID: m.Chat.ID}
+	users := UnifiedUsers(d)
+	pages := max(1, (len(users)+userPageSize-1)/userPageSize)
+	page = max(0, min(page, pages-1))
+	next := pending{Mode: "users", Token: token, Version: configVersion(d), Until: time.Now().Add(5 * time.Minute), ChatID: m.Chat.ID, Page: page}
 	k := tg.K()
-	for _, u := range UnifiedUsers(d) {
-		label := u.UUID + " · " + u.Name + " → " + u.Outbound
+	for _, u := range users[min(page*userPageSize, len(users)):min((page+1)*userPageSize, len(users))] {
+		label := u.Name + " → " + u.Outbound
 		k.Rows = append(k.Rows, []tg.Button{tg.B(label, "user:pick:"+token+":"+ref(u.Key))})
 	}
+	nav := []tg.Button{}
+	if page > 0 {
+		nav = append(nav, tg.B("上一页", fmt.Sprintf("user:page:%s:%d", token, page-1)))
+	}
+	nav = append(nav, tg.B(fmt.Sprintf("%d / %d", page+1, pages), "user:noop:"+token+":0"))
+	if page+1 < pages {
+		nav = append(nav, tg.B("下一页", fmt.Sprintf("user:page:%s:%d", token, page+1)))
+	}
+	k.Rows = append(k.Rows, nav)
 	k.Rows = append(k.Rows, []tg.Button{tg.B("添加用户", "user:add"), tg.B("返回", "panel")})
-	return b.send(ctx, m.Chat.ID, "点击 UUID，选择出站 IP，再确认绑定。出站 IP 按钮显示配置中的上游地址，选择时会实时验证实际出口 IP。", k)
+	text := fmt.Sprintf("入站用户绑定（共 %d 人，第 %d / %d 页）\n点击用户查看当前绑定，再选择出站并确认保存。", len(users), page+1, pages)
+	if edit {
+		err = b.API.Edit(ctx, m.Chat.ID, m.ID, text, k, false)
+		next.MessageID = m.ID
+	} else {
+		var sent tg.Message
+		sent, err = b.API.Send(ctx, m.Chat.ID, text, k, false)
+		next.MessageID = sent.ID
+	}
+	if err == nil {
+		*st = next
+	}
+	return err
 }
 func (b *Bot) userCallback(ctx context.Context, m tg.Message, d Doc, cb string, st *pending) error {
 	if cb == "user:list" {
@@ -34,10 +64,22 @@ func (b *Bot) userCallback(ctx context.Context, m tg.Message, d Doc, cb string, 
 		return b.send(ctx, m.Chat.ID, "发送 /adduser <统一入口 tag> <用户名称> <出站 tag> [UUID]；旧入站不会自动合并。", back())
 	}
 	p := strings.Split(cb, ":")
-	if len(p) != 4 || p[2] != st.Token || st.Token == "" || time.Now().After(st.Until) || st.ChatID != m.Chat.ID || st.Version != configVersion(d) {
-		return errors.New("选择已过期或配置已变化，请重新打开 UUID 用户菜单")
+	if len(p) != 4 || p[2] != st.Token || st.Token == "" || time.Now().After(st.Until) || st.ChatID != m.Chat.ID || (st.MessageID != 0 && st.MessageID != m.ID) {
+		return errors.New("选择已过期，请重新打开入站用户绑定菜单")
+	}
+	if p[1] == "page" {
+		page, err := strconv.Atoi(p[3])
+		if err != nil || page < 0 {
+			return errors.New("页码无效")
+		}
+		return b.userPage(ctx, m, d, st, page, true)
+	}
+	if st.Version != configVersion(d) {
+		return errors.New("配置已变化，请重新打开入站用户绑定菜单")
 	}
 	switch p[1] {
+	case "noop":
+		return nil
 	case "history":
 		if st.Mode != "user-history" || ref(st.User) != p[3] {
 			return errors.New("历史映射确认已失效")
@@ -52,7 +94,7 @@ func (b *Bot) userCallback(ctx context.Context, m tg.Message, d Doc, cb string, 
 		}
 		return b.send(ctx, m.Chat.ID, "✅ 已关联历史流量、额度、到期和手动暂停："+legacy+" → "+key, back())
 	case "pick":
-		if st.Mode != "users" && st.Mode != "user-out" {
+		if st.Mode != "users" {
 			return errors.New("按钮已失效")
 		}
 		var u UnifiedUser
@@ -68,7 +110,7 @@ func (b *Bot) userCallback(ctx context.Context, m tg.Message, d Doc, cb string, 
 		st.Mode = "user-detail"
 		st.User = u.Key
 		st.MessageID = m.ID
-		return b.API.Edit(ctx, m.Chat.ID, m.ID, "用户 "+u.Name+"\nUUID "+u.UUID+"\n当前出站 "+u.Outbound, tg.K([]tg.Button{tg.B("更换出站", "user:change:"+st.Token+":"+ref(u.Key)), tg.B("取消", "cancel")}), false)
+		return b.API.Edit(ctx, m.Chat.ID, m.ID, "用户 "+u.Name+"\nUUID "+u.UUID+"\n当前出站 "+u.Outbound, tg.K([]tg.Button{tg.B("更换出站", "user:change:"+st.Token+":"+ref(u.Key)), tg.B("返回列表", fmt.Sprintf("user:page:%s:%d", st.Token, st.Page)), tg.B("取消", "cancel")}), false)
 	case "change":
 		if st.Mode != "user-detail" || st.MessageID != m.ID || ref(st.User) != p[3] {
 			return errors.New("请先选择 UUID")
@@ -119,12 +161,13 @@ func (b *Bot) userCallback(ctx context.Context, m tg.Message, d Doc, cb string, 
 			return err
 		}
 		st.Token = token
-		return b.API.Edit(ctx, m.Chat.ID, m.ID, "确认绑定 "+st.User+" → "+out+"？已有连接将随 sing-box 重载断开并重新连接。", tg.K([]tg.Button{tg.B("确认绑定", "user:confirm:"+token+":"+ref(st.User)), tg.B("取消", "cancel")}), false)
+		u, _ := findUser(d, st.User)
+		return b.API.Edit(ctx, m.Chat.ID, m.ID, "确认绑定 "+u.Name+" → "+out+"？已有连接将随 sing-box 重载断开并重新连接。", tg.K([]tg.Button{tg.B("确认绑定", "user:confirm:"+token+":"+ref(st.User)), tg.B("取消", "cancel")}), false)
 	case "confirm":
 		if st.Mode != "user-confirm" || st.MessageID != m.ID || ref(st.User) != p[3] {
 			return errors.New("确认已失效")
 		}
-		key, out, version := st.User, st.Outbound, st.Version
+		key, out, version, page := st.User, st.Outbound, st.Version, st.Page
 		expectedIP := st.Healthy[out]
 		if b.Config.Probe != nil {
 			ip, err := b.Config.Probe(ctx, d, out)
@@ -157,7 +200,11 @@ func (b *Bot) userCallback(ctx context.Context, m tg.Message, d Doc, cb string, 
 		if err := b.Store.Log(ctx, strconv.FormatInt(m.From.ID, 10), "bind_auth_user", key+" -> "+out); err != nil {
 			return fmt.Errorf("绑定已生效，但审计日志写入失败：%w", err)
 		}
-		return b.send(ctx, m.Chat.ID, "✅ 已绑定并保存："+key+" → "+out, back())
+		u, _ := findUser(d, key)
+		if err := b.send(ctx, m.Chat.ID, "✅ 已绑定并保存："+u.Name+" → "+out, nil); err != nil {
+			return err
+		}
+		return b.userPage(ctx, m, d, st, page, true)
 	}
 	return errors.New("未知用户操作")
 }

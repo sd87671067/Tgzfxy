@@ -193,6 +193,7 @@ func TestUnifiedTelegramConfirmationOwnershipStalenessAndReplay(t *testing.T) {
 		t.Fatal(e)
 	}
 	token := st.Token
+	m.ID = st.MessageID
 	u := UnifiedUsers(d)[0]
 	if e := b.userCallback(ctx, m, d, "user:pick:"+token+":"+ref(u.Key), st); e != nil {
 		t.Fatal(e)
@@ -358,10 +359,10 @@ func TestUnifiedHistoryAdoptionPoliciesReportingAndRollback(t *testing.T) {
 }
 
 func TestUnifiedValidationRejectsBypassesAndBadAliases(t *testing.T) {
-	for _, which := range []string{"global", "missing-guard", "direct-route", "alias-loop", "duplicate-route"} {
+	for _, which := range []string{"global", "missing-guard", "aggregate-direct", "alias-loop", "duplicate-route"} {
 		t.Run(which, func(t *testing.T) {
 			d := unifiedDoc(t)
-			u := UnifiedUsers(d)[0]
+			u := UnifiedUsers(d)[1]
 			r := nested(d, "route")
 			switch which {
 			case "global":
@@ -374,10 +375,11 @@ func TestUnifiedValidationRejectsBypassesAndBadAliases(t *testing.T) {
 					}
 				}
 				r["rules"] = rules
-			case "direct-route":
+			case "aggregate-direct":
 				for _, raw := range list(r["rules"]) {
 					if ruleForUser(obj(raw), u) {
 						obj(raw)["outbound"] = "direct"
+						delete(obj(raw), "auth_user")
 					}
 				}
 			case "alias-loop":
@@ -455,6 +457,7 @@ func TestUnifiedVerifiedBindingRollsBackWrongExit(t *testing.T) {
 	if e := b.userMenu(ctx, m, d, st); e != nil {
 		t.Fatal(e)
 	}
+	m.ID = st.MessageID
 	u := UnifiedUsers(d)[0]
 	for _, cb := range []string{"user:pick:" + st.Token + ":" + ref(u.Key), "user:change:" + st.Token + ":" + ref(u.Key), "user:out:" + st.Token + ":" + ref("proxy")} {
 		if e := b.userCallback(ctx, m, d, cb, st); e != nil {
@@ -490,6 +493,7 @@ func TestUnifiedHealthyChoicesAndFeatureGate(t *testing.T) {
 	if e := b.userMenu(ctx, m, d, st); e != nil {
 		t.Fatal(e)
 	}
+	m.ID = st.MessageID
 	u := UnifiedUsers(d)[0]
 	for _, cb := range []string{"user:pick:" + st.Token + ":" + ref(u.Key), "user:change:" + st.Token + ":" + ref(u.Key)} {
 		if e := b.userCallback(ctx, m, d, cb, st); e != nil {

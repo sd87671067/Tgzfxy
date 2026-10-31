@@ -607,6 +607,14 @@ func (c *ConfigManager) write(raw []byte) error {
 	return os.Rename(name, c.Path)
 }
 func (c *ConfigManager) Apply(ctx context.Context, d Doc, after func() error) error {
+	if err := NormalizeDirectUsers(d); err != nil {
+		return err
+	}
+	if len(UnifiedUsers(d)) > 0 {
+		if err := ValidateUnified(d); err != nil {
+			return err
+		}
+	}
 	old, err := os.ReadFile(c.Path)
 	if err != nil {
 		return err

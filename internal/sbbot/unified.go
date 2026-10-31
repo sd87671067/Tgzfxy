@@ -110,8 +110,9 @@ func ConnectionTag(meta Doc, d Doc) string {
 	return ""
 }
 
-// sing-box 1.13 Clash JSON omits authenticated username. Its chains array
-// retains our dedicated selector tag, including when users share an exit.
+// sing-box 1.13 omits the username in metadata, but exposes the matched rule.
+// Match the entire validated per-user direct rule, never a shared exit chain.
+// Older configurations still use dedicated selector chains.
 func ConnectionAccounting(c Doc, d Doc) string {
 	meta := obj(c["metadata"])
 	key := ConnectionTag(meta, d)
@@ -123,6 +124,11 @@ func ConnectionAccounting(c Doc, d Doc) string {
 		_, inbound, _ = strings.Cut(str(meta["type"]), "/")
 	}
 	for _, u := range UnifiedUsers(d) {
+		if u.Inbound == inbound && u.Outbound == "direct" &&
+			str(c["rule"]) == "inbound="+u.Inbound+" auth_user="+u.Name+" => route(direct)" &&
+			slices.Contains(stringsOf(c["chains"]), "direct") {
+			return u.Key
+		}
 		if u.Inbound == inbound && slices.Contains(stringsOf(c["chains"]), userOutbound(u.Key)) {
 			return u.Key
 		}
@@ -147,7 +153,12 @@ func BindUser(d Doc, key, out string) error {
 			outs = append(outs, raw)
 		}
 	}
-	d["outbounds"] = append(outs, Doc{"type": "selector", "tag": alias, "outbounds": []string{out}, "default": out, "interrupt_exist_connections": true})
+	if out == "direct" {
+		alias = "direct"
+		d["outbounds"] = outs
+	} else {
+		d["outbounds"] = append(outs, Doc{"type": "selector", "tag": alias, "outbounds": []string{out}, "default": out, "interrupt_exist_connections": true})
+	}
 	route := nested(d, "route")
 	var rules []any
 	for _, raw := range list(route["rules"]) {
@@ -164,6 +175,19 @@ func BindUser(d Doc, key, out string) error {
 	}
 	r := Doc{"inbound": []string{u.Inbound}, "auth_user": []string{u.Name}, "action": "route", "outbound": alias}
 	route["rules"] = slices.Insert(rules, pos, any(r))
+	return nil
+}
+
+// NormalizeDirectUsers only removes the managed, one-target direct aliases.
+// Rebinding each user separately preserves identity, pauses and route ownership.
+func NormalizeDirectUsers(d Doc) error {
+	for _, u := range UnifiedUsers(d) {
+		if u.Outbound == "direct" {
+			if err := BindUser(d, u.Key, "direct"); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 func validName(s string) bool { return regexp.MustCompile(`^[A-Za-z0-9_-]{1,48}$`).MatchString(s) }
@@ -316,8 +340,23 @@ func ValidateUnified(d Doc) error {
 				continue
 			}
 			key := userKey(str(in["tag"]), name)
-			if str(r["action"]) != "route" || len(r) != 4 || str(r["outbound"]) != userOutbound(key) || routed[name] {
-				return errors.New("用户必须通过唯一专属 selector 路由")
+			target := str(r["outbound"])
+			if str(r["action"]) != "route" || len(r) != 4 || (target != userOutbound(key) && target != "direct") || routed[name] {
+				return errors.New("用户必须通过逐用户 direct 或专属 selector 路由")
+			}
+			if target == "direct" {
+				directOK := false
+				for _, raw := range list(d["outbounds"]) {
+					o := obj(raw)
+					if str(o["tag"]) == "direct" && str(o["type"]) == "direct" {
+						directOK = true
+					}
+				}
+				if !directOK {
+					return errors.New("direct 出站无效")
+				}
+				routed[name] = true
+				continue
 			}
 			aliasOK := false
 			for _, raw := range list(d["outbounds"]) {
@@ -368,6 +407,9 @@ func (c *ConfigManager) applyUnifiedVerified(ctx context.Context, d Doc, expecte
 		if configVersion(active) != expected {
 			return errors.New("配置已被外部修改，未写入")
 		}
+	}
+	if err := NormalizeDirectUsers(d); err != nil {
+		return err
 	}
 	if err := ValidateUnified(d); err != nil {
 		return err

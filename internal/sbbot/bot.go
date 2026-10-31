@@ -24,6 +24,7 @@ type pending struct {
 	Version, User, Outbound        string
 	ChatID, MessageID              int64
 	Healthy                        map[string]string
+	Page                           int
 }
 type Bot struct {
 	API                                              *tg.Client
@@ -294,8 +295,12 @@ func (b *Bot) command(ctx context.Context, m tg.Message, cmd string, args []stri
 		if e = b.Config.applyUnifiedVersion(ctx, d, version); e != nil {
 			return e
 		}
+		page := st.Page
 		*st = pending{}
-		return reply("✅ 已添加用户：" + u.Key + "\n使用 /share " + u.Key + " 获取链接；/limit、/setexpiry 支持此用户标识")
+		if err := reply("✅ 已添加用户：" + u.Key + "\n使用 /share " + u.Key + " 获取链接；/limit、/setexpiry 支持此用户标识"); err != nil {
+			return err
+		}
+		return b.userPage(ctx, m, d, st, page, false)
 	case "":
 		out, err := ParseOutbound(m.Text)
 		if err != nil {

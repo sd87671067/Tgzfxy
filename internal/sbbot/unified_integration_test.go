@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -252,6 +253,63 @@ func TestUnifiedRealSingBoxRealityVisionRoutingAccountingRollback(t *testing.T) 
 	}
 	cancel()
 	hold.Wait()
+	// Two users share the single direct outbound. Real Clash matched rules must
+	// distinguish them even though their chains are identical and lack usernames.
+	if e = BindUser(d, users[3].Key, "direct"); e != nil {
+		t.Fatal(e)
+	}
+	if e = b.Config.ApplyUnified(context.Background(), d); e != nil {
+		t.Fatal(e)
+	}
+	directServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(strings.Repeat("d", 4096)))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer directServer.Close()
+	directCtx, stopDirect := context.WithCancel(context.Background())
+	var directCommands []*exec.Cmd
+	for _, i := range []int{2, 3} {
+		cmd := exec.CommandContext(directCtx, "curl", "--silent", "--max-time", "15", "--noproxy", "", "--proxy", fmt.Sprintf("socks5h://127.0.0.1:%d", socks[i]), directServer.URL)
+		if e = cmd.Start(); e != nil {
+			t.Fatal(e)
+		}
+		directCommands = append(directCommands, cmd)
+	}
+	defer func() {
+		stopDirect()
+		for _, cmd := range directCommands {
+			cmd.Wait()
+		}
+	}()
+	foundDirect := map[string]bool{}
+	for n := 0; n < 50 && len(foundDirect) < 2; n++ {
+		payload, err := JSONGet(context.Background(), http.DefaultClient, fmt.Sprintf("http://127.0.0.1:%d/connections", apiPort), nil)
+		if err == nil {
+			for _, raw := range list(payload["connections"]) {
+				c := obj(raw)
+				key := ConnectionAccounting(c, d)
+				if key == users[2].Key || key == users[3].Key {
+					foundDirect[key] = true
+					t.Logf("real direct accounting: %s chains=%v rule=%s", key, c["chains"], c["rule"])
+				}
+			}
+			if err = b.Store.Sample(context.Background(), payload, d); err != nil {
+				t.Fatal(err)
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if len(foundDirect) != 2 {
+		t.Fatal("shared direct users lost independent accounting", foundDirect)
+	}
+	for _, i := range []int{2, 3} {
+		n, err := b.Store.Usage(context.Background(), users[i].Key, time.Unix(0, 0))
+		if err != nil || n < 4096 {
+			t.Fatal("direct traffic missing", users[i].Name, n, err)
+		}
+	}
+	stopDirect()
 	// Real candidate check, real isolated restart and scoped pause.
 	if e = BindUser(d, users[0].Key, "exit-b"); e != nil {
 		t.Fatal(e)
