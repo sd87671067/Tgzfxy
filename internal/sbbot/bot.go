@@ -23,6 +23,7 @@ type pending struct {
 	Until                          time.Time
 	Version, User, Outbound        string
 	ChatID, MessageID              int64
+	Healthy                        map[string]string
 }
 type Bot struct {
 	API                                              *tg.Client
@@ -61,7 +62,7 @@ func back() *tg.Keyboard {
 func (b *Bot) panel() *tg.Keyboard {
 	k := &tg.Keyboard{}
 	if b.Features["singbox"] {
-		k.Rows = append(k.Rows, []tg.Button{tg.B("📊 今日流量", "use:day"), tg.B("📅 本月流量", "use:month")}, []tg.Button{tg.B("🚦 限额管理", "limits"), tg.B("🚧 封禁管理", "blocks")}, []tg.Button{tg.B("🔐 协议管理", "proto:menu")})
+		k.Rows = append(k.Rows, []tg.Button{tg.B("📊 今日流量", "use:day"), tg.B("📅 本月流量", "use:month")}, []tg.Button{tg.B("🚦 限额管理", "limits"), tg.B("🚧 封禁管理", "blocks")}, []tg.Button{tg.B("🌐 统一入口管理", "unified:menu"), tg.B("🔐 协议管理", "proto:menu")})
 	}
 	if b.Features["ufw"] {
 		k.Rows = append(k.Rows, []tg.Button{tg.B("🧱 UFW端口管理", "ufw:list")})
@@ -86,7 +87,7 @@ func (b *Bot) available(cmd, cb string) bool {
 	if cmd == "bwh" || strings.HasPrefix(cb, "bwh:") {
 		feature = "bwh"
 	}
-	for _, p := range []string{"use:", "proto:", "share", "out:", "bind:", "limit:", "block:", "delete:", "protodel:", "user:"} {
+	for _, p := range []string{"use:", "proto:", "share", "out:", "bind:", "limit:", "block:", "delete:", "protodel:", "user:", "unified:"} {
 		if strings.HasPrefix(cb, p) {
 			feature = "singbox"
 		}

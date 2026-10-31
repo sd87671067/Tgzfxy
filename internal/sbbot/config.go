@@ -557,6 +557,7 @@ func ShareLinks(d Doc, tags []string, host, domain string, unifiedPort ...int) (
 type ConfigManager struct {
 	Path, Domain, Cert, Key, SNI string
 	UnifiedPublicPort            int
+	Probe                        func(context.Context, Doc, string) (string, error)
 	AutoRestart                  bool
 	Run                          func(context.Context, string, ...string) (string, error)
 }

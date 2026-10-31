@@ -1,6 +1,12 @@
 name: Build Bot artifacts
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "cmd/**"
+      - "internal/**"
+      - ".github/workflows/build-bot.yml"
 permissions:
   contents: read
 jobs:

@@ -49,3 +49,33 @@ Operational limits: Clash polling can miss connections entirely between polls;
 it is not an exact billing source. Applying a binding reloads sing-box and existing
 proxy connections reconnect. This release is code-only: it neither deploys a new
 Bot nor changes production listeners, firewalls or authorization services.
+
+## Shared TCP 443 deployment
+
+The administrator panel includes a unified entry menu. Binding follows user →
+change outbound → healthy outbound and observed exit IP → confirmation. The
+production ConfigManager probes each candidate using a temporary loopback
+sing-box client, checks the chosen exit again before applying, then performs a
+REALITY/Vision request as that user through the public SNI listener. An exit IP
+mismatch or failed request restores the previous configuration and service.
+Probes never change user limits, expiry, pause state or accounting history.
+
+Host prerequisites for these probes are Python 3, curl and sing-box; generated
+probe configurations have mode 0600 and are removed along with their subprocesses.
+Unreachable exits are omitted from binding choices, but are not automatically
+deleted: deletion requires repeated authentication failures and a reviewed private
+manifest. Production credentials, UUIDs, links, mappings and backups stay off Git.
+
+HAProxy must use TCP TLS passthrough with distinct license and REALITY SNI ACLs.
+Bind its public IPv4 and IPv6 TCP 443 listeners, send license SNI to the gateway's
+loopback HTTPS port and REALITY SNI to the sole loopback VLESS listener, and reject
+unknown SNI. Test this routing on a temporary loopback port before moving the
+license gateway's Docker 443 mapping. Preserve certificate mounts, database,
+network and environment. Do not send PROXY protocol to an unprepared backend.
+The backend sees the proxy address; source-IP policy requires separate review.
+
+Keep old healthy VLESS listeners until every retained UUID succeeds through public
+443. Then remove legacy VLESS listeners and their route references. Preserve other
+protocols and unrelated services. Copy legacy policy and attach history by user
+key in a transaction; retain samples and audit rows. Rollback removes only the
+migration's new policy and mapping rows, never overwrites a live database snapshot.

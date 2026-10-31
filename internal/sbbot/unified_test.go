@@ -197,6 +197,9 @@ func TestUnifiedTelegramConfirmationOwnershipStalenessAndReplay(t *testing.T) {
 	if e := b.userCallback(ctx, m, d, "user:pick:"+token+":"+ref(u.Key), st); e != nil {
 		t.Fatal(e)
 	}
+	if e := b.userCallback(ctx, m, d, "user:change:"+token+":"+ref(u.Key), st); e != nil {
+		t.Fatal(e)
+	}
 	if e := b.userCallback(ctx, m, d, "user:out:"+token+":"+ref("proxy"), st); e != nil {
 		t.Fatal(e)
 	}
@@ -432,5 +435,81 @@ func TestUnifiedPublicPortPreservesLegacyLinks(t *testing.T) {
 	}
 	if _, err := ShareLinks(d, []string{users[0].Key}, "example.org", "", 65536); err == nil {
 		t.Fatal("invalid port accepted")
+	}
+}
+
+func TestUnifiedVerifiedBindingRollsBackWrongExit(t *testing.T) {
+	b, _ := testBot(t)
+	d := unifiedDoc(t)
+	installDoc(t, b, d)
+	b.Config.AutoRestart = true
+	b.Config.Probe = func(_ context.Context, _ Doc, target string) (string, error) {
+		if strings.HasPrefix(target, userPrefix) {
+			return "192.0.2.99", nil
+		}
+		return "192.0.2.1", nil
+	}
+	ctx := context.Background()
+	m := tg.Message{ID: 42, From: tg.User{ID: 1}, Chat: tg.Chat{ID: 1, Type: "private"}}
+	st := &pending{}
+	if e := b.userMenu(ctx, m, d, st); e != nil {
+		t.Fatal(e)
+	}
+	u := UnifiedUsers(d)[0]
+	for _, cb := range []string{"user:pick:" + st.Token + ":" + ref(u.Key), "user:change:" + st.Token + ":" + ref(u.Key), "user:out:" + st.Token + ":" + ref("proxy")} {
+		if e := b.userCallback(ctx, m, d, cb, st); e != nil {
+			t.Fatal(e)
+		}
+	}
+	before, _ := os.ReadFile(b.Config.Path)
+	if e := b.userCallback(ctx, m, d, "user:confirm:"+st.Token+":"+ref(u.Key), st); e == nil || !strings.Contains(e.Error(), "已回滚") {
+		t.Fatal(e)
+	}
+	after, _ := os.ReadFile(b.Config.Path)
+	if string(before) != string(after) {
+		t.Fatal("wrong exit binding persisted")
+	}
+	if st.Token != "" {
+		t.Fatal("failed confirmation can be replayed")
+	}
+}
+
+func TestUnifiedHealthyChoicesAndFeatureGate(t *testing.T) {
+	b, _ := testBot(t)
+	d := unifiedDoc(t)
+	installDoc(t, b, d)
+	b.Config.Probe = func(_ context.Context, _ Doc, target string) (string, error) {
+		if target == "proxy" {
+			return "", errors.New("authentication rejected")
+		}
+		return "192.0.2.1", nil
+	}
+	ctx := context.Background()
+	m := tg.Message{ID: 42, From: tg.User{ID: 1}, Chat: tg.Chat{ID: 1, Type: "private"}}
+	st := &pending{}
+	if e := b.userMenu(ctx, m, d, st); e != nil {
+		t.Fatal(e)
+	}
+	u := UnifiedUsers(d)[0]
+	for _, cb := range []string{"user:pick:" + st.Token + ":" + ref(u.Key), "user:change:" + st.Token + ":" + ref(u.Key)} {
+		if e := b.userCallback(ctx, m, d, cb, st); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if st.Healthy["proxy"] != "" || st.Healthy["direct"] != "192.0.2.1" {
+		t.Fatal(st.Healthy)
+	}
+	if e := b.userCallback(ctx, m, d, "user:out:"+st.Token+":"+ref("proxy"), st); e == nil {
+		t.Fatal("unhealthy choice accepted")
+	}
+	b.Features["singbox"] = false
+	if b.available("", "unified:menu") {
+		t.Fatal("feature gate bypass")
+	}
+	b.Features["singbox"] = true
+	for _, cb := range []string{"unified:menu", "unified:status", "unified:outbounds", "unified:reality"} {
+		if e := b.unifiedMenu(ctx, m, d, cb, st); e != nil {
+			t.Fatal(e)
+		}
 	}
 }

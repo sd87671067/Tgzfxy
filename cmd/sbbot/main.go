@@ -141,6 +141,7 @@ func run() error {
 		return errors.New("UNIFIED_PUBLIC_PORT 必须为 0-65535，0 表示使用监听端口")
 	}
 	config := &sbbot.ConfigManager{Path: path, UnifiedPublicPort: publicPort, Domain: env("SHARE_DOMAIN", ""), Cert: env("ANYTLS_CERT_PATH", ""), Key: env("ANYTLS_KEY_PATH", ""), SNI: env("REALITY_SNI", "itunes.apple.com"), AutoRestart: yes("AUTO_RESTART_SING_BOX", true), Run: sbbot.HostRun}
+	config.Probe = config.ProbeTraffic
 	host := env("SHARE_HOST", "")
 	if host == "" {
 		s, e := sbbot.HostRun(ctx, "/bin/hostname", "-I")

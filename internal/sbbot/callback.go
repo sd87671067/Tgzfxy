@@ -94,6 +94,9 @@ func (b *Bot) callback(ctx context.Context, m tg.Message, cb string, st *pending
 	if err != nil {
 		return err
 	}
+	if strings.HasPrefix(cb, "unified:") {
+		return b.unifiedMenu(ctx, m, d, cb, st)
+	}
 	if strings.HasPrefix(cb, "user:") {
 		return b.userCallback(ctx, m, d, cb, st)
 	}

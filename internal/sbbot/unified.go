@@ -350,6 +350,9 @@ func (c *ConfigManager) ApplyUnified(ctx context.Context, d Doc) error {
 	return c.applyUnifiedVersion(ctx, d, "")
 }
 func (c *ConfigManager) applyUnifiedVersion(ctx context.Context, d Doc, expected string) error {
+	return c.applyUnifiedVerified(ctx, d, expected, nil)
+}
+func (c *ConfigManager) applyUnifiedVerified(ctx context.Context, d Doc, expected string, verify func() error) error {
 	if !c.AutoRestart || c.Run == nil {
 		return errors.New("统一用户变更需要启用配置检查与 sing-box 重载；未写入配置")
 	}
@@ -404,6 +407,12 @@ func (c *ConfigManager) applyUnifiedVersion(ctx context.Context, d Doc, expected
 	}
 	return c.Apply(ctx, d, func() error {
 		_, err := c.Run(ctx, "/usr/bin/systemctl", "is-active", "--quiet", "sing-box")
-		return err
+		if err != nil {
+			return err
+		}
+		if verify != nil {
+			return verify()
+		}
+		return nil
 	})
 }
