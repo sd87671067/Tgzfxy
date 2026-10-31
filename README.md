@@ -116,3 +116,9 @@ Behind HAProxy, set `UNIFIED_PUBLIC_PORT=443` so `/share` uses the public port f
 - `/alllimit` 不再 `VACUUM INTO` 整库；变更前原策略以 0600 权限原子写入 `sbbot.db.policy-recovery.json`，运行中失败恢复旧策略。部署前仍须使用 SQLite backup API 创建独立完整备份。
 - 启动十分钟后、随后每六小时执行限时维护：分批清除超过 24 小时的操作/转发日志和过期转发缓存、轮转日志，仅执行 PASSIVE checkpoint。不删除 samples、limits、user_cycles、sent、retry_state、会话、配置或备份，不执行 VACUUM、不直接删除 WAL/SHM。
 - Docker 建议使用 local 日志驱动，`max-size: 5m`、`max-file: 2`。部署只替换 sbbot 并保留当前健康镜像及回滚版本。
+
+### 分享地址与本机 API 密钥
+
+`SHARE_HOST` 显式配置始终优先，支持公网地址或域名；不配置时通过有超时和响应大小限制的 HTTPS 服务探测公网 IPv4，失败时要求配置，不使用 `hostname -I` 的私网地址。命令、统一入口和菜单复用同一分享地址及链接生成器，保持 VLESS Reality 参数与公开端口行为。
+
+`SINGBOX_API_SECRET` 应使用安全随机源生成至少 32 字节，并与 sing-box 的 `experimental.clash_api.secret` 同步更新；API 只监听 `127.0.0.1:9090`。生产环境文件、数据库、证书、私钥、配置和备份不得提交。历史敏感内容应先撤销凭据，历史改写须单独授权。

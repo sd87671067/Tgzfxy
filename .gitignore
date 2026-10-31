@@ -34,3 +34,20 @@
 data/
 backups/
 bin/
+
+# Never publish local deployments, archives, certificates or private keys.
+*.bak
+*.bak.*
+*.backup*
+*.tar
+*.tar.*
+*.zip
+*.p12
+*.pfx
+*.crt
+*.cer
+id_rsa*
+id_ed25519*
+config.json
+config.*.json
+releases/

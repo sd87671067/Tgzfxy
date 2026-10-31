@@ -142,12 +142,9 @@ func run() error {
 	}
 	config := &sbbot.ConfigManager{Path: path, UnifiedPublicPort: publicPort, Domain: env("SHARE_DOMAIN", ""), Cert: env("ANYTLS_CERT_PATH", ""), Key: env("ANYTLS_KEY_PATH", ""), SNI: env("REALITY_SNI", "itunes.apple.com"), AutoRestart: yes("AUTO_RESTART_SING_BOX", true), Run: sbbot.HostRun}
 	config.Probe = config.ProbeTraffic
-	host := env("SHARE_HOST", "")
-	if host == "" {
-		s, e := sbbot.HostRun(ctx, "/bin/hostname", "-I")
-		if e == nil && len(strings.Fields(s)) > 0 {
-			host = strings.Fields(s)[0]
-		}
+	host, err := sbbot.ResolveShareHost(ctx, env("SHARE_HOST", ""))
+	if err != nil {
+		return err
 	}
 	bot := &sbbot.Bot{API: api, Store: store, Config: config, Admins: admins, Features: features, TZ: tz, HTTP: &http.Client{Timeout: 60 * time.Second}, Host: host, APIURL: strings.TrimRight(env("SINGBOX_API_URL", "http://127.0.0.1:9090"), "/"), APISecret: env("SINGBOX_API_SECRET", ""), BWHURL: "https://api.64clouds.com/v1", BWHKey: env("BWH_API_KEY", ""), BWHVEID: env("BWH_VEID", "")}
 	bot.InitStates()
