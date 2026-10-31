@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"local/bots/internal/forwarder"
 	tg "local/bots/internal/telegram"
+	"log"
 	"math"
 	"net/http"
 	"os"
@@ -63,7 +64,7 @@ func back() *tg.Keyboard {
 func (b *Bot) panel() *tg.Keyboard {
 	k := &tg.Keyboard{}
 	if b.Features["singbox"] {
-		k.Rows = append(k.Rows, []tg.Button{tg.B("📊 今日流量", "use:day"), tg.B("📅 本月流量", "use:month")}, []tg.Button{tg.B("🚦 限额管理", "limits"), tg.B("🚧 封禁管理", "blocks")}, []tg.Button{tg.B("🌐 统一入口管理", "unified:menu"), tg.B("🔐 协议管理", "proto:menu")})
+		k.Rows = append(k.Rows, []tg.Button{tg.B("📊 今日流量", "use:day"), tg.B("📅 本月流量", "use:month")}, []tg.Button{tg.B("🚦 用户额度", "user:list"), tg.B("🚧 封禁管理", "blocks")}, []tg.Button{tg.B("🌐 统一入口管理", "unified:menu"), tg.B("🔐 协议管理", "proto:menu")})
 	}
 	if b.Features["ufw"] {
 		k.Rows = append(k.Rows, []tg.Button{tg.B("🧱 UFW端口管理", "ufw:list")})
@@ -79,7 +80,7 @@ func protocolMenu() *tg.Keyboard {
 }
 func (b *Bot) available(cmd, cb string) bool {
 	feature := ""
-	if slices.Contains(strings.Fields("today month status usage limit alllimit block unblock share addout addvless addhy2 addanytls add protocols setexpiry users adduser adopthistory"), cmd) {
+	if slices.Contains(strings.Fields("today month status usage alllimit block unblock share addout addvless addhy2 addanytls add protocols setexpiry users adduser adopthistory"), cmd) {
 		feature = "singbox"
 	}
 	if cmd == "ufw" || strings.HasPrefix(cb, "ufw:") {
@@ -88,17 +89,21 @@ func (b *Bot) available(cmd, cb string) bool {
 	if cmd == "bwh" || strings.HasPrefix(cb, "bwh:") {
 		feature = "bwh"
 	}
-	for _, p := range []string{"use:", "proto:", "share", "out:", "bind:", "limit:", "block:", "delete:", "protodel:", "user:", "unified:", "select:", "traffic:"} {
+	for _, p := range []string{"use:", "proto:", "share", "out:", "bind:", "block:", "delete:", "protodel:", "user:", "unified:", "select:", "traffic:"} {
 		if strings.HasPrefix(cb, p) {
 			feature = "singbox"
 		}
 	}
-	if cb == "limits" || cb == "blocks" {
+	if cb == "blocks" {
 		feature = "singbox"
 	}
 	return feature == "" || b.Features[feature]
 }
 func (b *Bot) Handle(ctx context.Context, u tg.Update) error {
+	start := time.Now()
+	defer func() {
+		log.Printf("bot_operation callback=%t duration_ms=%d", u.Callback != nil, time.Since(start).Milliseconds())
+	}()
 	var m tg.Message
 	cb := ""
 	if u.Callback != nil {
@@ -112,7 +117,7 @@ func (b *Bot) Handle(ctx context.Context, u tg.Update) error {
 		m.From = u.Callback.From
 		m.Text = ""
 		cb = u.Callback.Data
-		if err := b.API.Answer(ctx, u.Callback.ID, ""); err != nil {
+		if err := b.acknowledge(ctx, u.Callback); err != nil {
 			return err
 		}
 	} else if u.Message != nil {
@@ -239,7 +244,7 @@ func gib(s string) (int64, error) {
 func (b *Bot) command(ctx context.Context, m tg.Message, cmd string, args []string, st *pending) error {
 	reply := func(s string) error { return b.send(ctx, m.Chat.ID, s, back()) }
 	if cmd == "help" {
-		return reply("/panel 操作面板\n/users UUID 用户与出站 IP\n/adopthistory 用户标识 旧入口：确认继承历史、额度、到期\n/adduser 统一入口 名称 出站 [UUID]\n/bind 来源 目标：添加转发规则（目标可填 bot）\n/switch [ID] 规则设置\n/cs 分钟 次数：重试冷却与次数\n规则支持实时/轮询、黑白名单、失败关键词、重试、按钮链接、成功通知。\n/today /month /status 流量\n/usage tag\n/alllimit tag [流量MB] [时间day]（默认 512000MB、30天）\n/limit tag GiB（0 不限）\n/block tag /unblock tag\n/share tag1 tag2\n/addout 添加出站\n/addvless tag [伪装域名] [有效期]\n/addhy2 tag [有效期]\n/addanytls tag [有效期]\n/add tag 有效期 流量G\n/protocols [页码]\n/setexpiry tag 有效期（0 永久；支持 1y/3m/2w/7d）\n/ufw list|allow|delete [端口] [tcp|udp|both]\n/bwh status|transfer|start|stop|reboot|resetpwd|snap|snap_create|snap_delete|snap_restore|logs\n/cancel 取消")
+		return reply("/panel 操作面板\n/users UUID 用户与出站 IP\n/adopthistory 用户标识 旧入口：确认继承历史、额度、到期\n/adduser 统一入口 名称 出站 [UUID]\n/bind 来源 目标：添加转发规则（目标可填 bot）\n/switch [ID] 规则设置\n/cs 分钟 次数：重试冷却与次数\n规则支持实时/轮询、黑白名单、失败关键词、重试、按钮链接、成功通知。\n/today /month /status 流量\n/usage tag\n/alllimit tag [流量MB] [时间day]（默认 512000MB、30天）\n/block tag /unblock tag\n/share tag1 tag2\n/addout 添加出站\n/addvless tag [伪装域名] [有效期]\n/addhy2 tag [有效期]\n/addanytls tag [有效期]\n/add tag 有效期 流量G\n/protocols [页码]\n/setexpiry tag 有效期（0 永久；支持 1y/3m/2w/7d）\n/ufw list|allow|delete [端口] [tcp|udp|both]\n/bwh status|transfer|start|stop|reboot|resetpwd|snap|snap_create|snap_delete|snap_restore|logs\n/cancel 取消")
 	}
 	if cmd == "bwh" {
 		return b.bwhCommand(ctx, m, args, st)
@@ -300,7 +305,7 @@ func (b *Bot) command(ctx context.Context, m tg.Message, cmd string, args []stri
 		}
 		page := st.Page
 		*st = pending{}
-		if err := reply("✅ 已添加用户：" + u.Key + "\n使用 /share " + u.Key + " 获取链接；/limit、/setexpiry 支持此用户标识"); err != nil {
+		if err := reply("✅ 已添加用户：" + u.Key + "\n使用 /share " + u.Key + " 获取链接；/alllimit、/setexpiry 支持此用户标识"); err != nil {
 			return err
 		}
 		return b.userPage(ctx, m, d, st, page, false)
@@ -351,9 +356,9 @@ func (b *Bot) command(ctx context.Context, m tg.Message, cmd string, args []stri
 			return err
 		}
 		return reply(text)
-	case "limit", "setexpiry", "block", "unblock":
+	case "setexpiry", "block", "unblock":
 		count := 1
-		if cmd == "limit" || cmd == "setexpiry" {
+		if cmd == "setexpiry" {
 			count = 2
 		}
 		if len(args) != count {
@@ -363,21 +368,15 @@ func (b *Bot) command(ctx context.Context, m tg.Message, cmd string, args []stri
 		if tag == "" {
 			return errors.New("未找到 tag 或端口")
 		}
-		if _, unified := findUser(d, tag); unified && (cmd == "limit" || cmd == "setexpiry") {
+		if _, unified := findUser(d, tag); unified && cmd == "setexpiry" {
 			if !b.Config.AutoRestart {
 				return errors.New("未启用配置检查与重载，未更新用户策略")
 			}
-			table := "limits"
+			table := "proto_expiry"
 			var value int64
-			if cmd == "limit" {
-				value, err = gib(args[1])
-			} else {
-				table = "proto_expiry"
-				var days int
-				days, err = ParseDuration(args[1])
-				if days > 0 {
-					value = time.Now().AddDate(0, 0, days).Unix()
-				}
+			days, err := ParseDuration(args[1])
+			if days > 0 {
+				value = time.Now().AddDate(0, 0, days).Unix()
 			}
 			if err != nil {
 				return err
@@ -387,16 +386,7 @@ func (b *Bot) command(ctx context.Context, m tg.Message, cmd string, args []stri
 			}
 			return reply("✅ 用户策略已更新并检查：" + tag)
 		}
-		if cmd == "limit" {
-			n, err := gib(args[1])
-			if err != nil {
-				return err
-			}
-			err = b.Store.SetLimit(ctx, tag, n)
-			if err != nil {
-				return err
-			}
-		} else if cmd == "setexpiry" {
+		if cmd == "setexpiry" {
 			days, err := ParseDuration(args[1])
 			if err != nil {
 				return err

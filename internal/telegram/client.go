@@ -27,10 +27,11 @@ type Message struct {
 	Text string `json:"text"`
 }
 type Callback struct {
-	ID      string   `json:"id"`
-	From    User     `json:"from"`
-	Message *Message `json:"message"`
-	Data    string   `json:"data"`
+	Acknowledged bool     `json:"-"`
+	ID           string   `json:"id"`
+	From         User     `json:"from"`
+	Message      *Message `json:"message"`
+	Data         string   `json:"data"`
 }
 type Update struct {
 	ID       int64     `json:"update_id"`

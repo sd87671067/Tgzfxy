@@ -3,11 +3,13 @@ package sbbot
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	tg "local/bots/internal/telegram"
 	"math"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 )
@@ -88,7 +90,7 @@ func (s *Store) SetCycle(ctx context.Context, key string, amount, days int64, ap
 		return errors.New("额度溢出或参数无效")
 	}
 	// Snapshot SQLite before changing the persisted policy.
-	if e = s.backupPolicy(ctx); e != nil {
+	if e = s.backupPolicy(ctx, key, old); e != nil {
 		return e
 	}
 	next := &UserCycle{total, amount, now + days*86400, now}
@@ -105,33 +107,51 @@ func (s *Store) SetCycle(ctx context.Context, key string, amount, days int64, ap
 	}
 	return nil
 }
-func (s *Store) backupPolicy(ctx context.Context) error {
-	var seq int
-	var name, path string
-	rows, e := s.DB.QueryContext(ctx, "PRAGMA database_list")
-	if e != nil {
-		return e
+
+// Persist only the policy being changed. Never VACUUM/copy traffic history on save.
+func (s *Store) backupPolicy(ctx context.Context, key string, previous *UserCycle) error {
+	var path string
+	if err := s.DB.QueryRowContext(ctx, "SELECT file FROM pragma_database_list WHERE name='main'").Scan(&path); err != nil {
+		return err
 	}
-	for rows.Next() {
-		if e = rows.Scan(&seq, &name, &path); e != nil {
-			rows.Close()
-			return e
-		}
-		if name == "main" {
-			break
-		}
-	}
-	rows.Close()
 	if path == "" {
 		return nil
 	}
-	dest := path + ".policy-backup-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	_, e = s.DB.ExecContext(ctx, "VACUUM INTO ?", dest)
-	if e == nil {
-		e = os.Chmod(dest, 0600)
+	raw, err := json.Marshal(struct {
+		Key      string
+		Previous *UserCycle
+		SavedAt  int64
+	}{key, previous, time.Now().Unix()})
+	if err != nil {
+		return err
 	}
-	return e
+	f, err := os.CreateTemp(filepath.Dir(path), ".policy-recovery-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err = f.Write(raw); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	if err = os.Rename(f.Name(), path+".policy-recovery.json"); err != nil {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }
+
 func (b *Bot) allLimit(ctx context.Context, m tg.Message, d Doc, args []string, st *pending) error {
 	amount, days, e := parseAllLimit(args)
 	if e != nil {

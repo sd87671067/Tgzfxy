@@ -85,7 +85,7 @@ func (b *Bot) userAction(ctx context.Context, m tg.Message, d Doc, p []string, s
 		if e != nil {
 			return e
 		}
-		return b.API.Edit(ctx, m.Chat.ID, m.ID, text+"\n发送：流量MB 天数（例如 2048 7），重设周期可用量；历史保留。\n原月额度：/limit "+u.Name+" GiB\n原有效期：/setexpiry "+u.Name+" 7d", tg.K([]tg.Button{tg.B("返回用户", "user:list")}), false)
+		return b.API.Edit(ctx, m.Chat.ID, m.ID, text+"\n发送：流量MB 天数（例如 2048 7），重设周期可用量；历史保留。\n原有效期：/setexpiry "+u.Name+" 7d", tg.K([]tg.Button{tg.B("返回用户", "user:list")}), false)
 	case "remove":
 		st.Mode = "user-remove"
 		st.Token, _ = randomHex(8)

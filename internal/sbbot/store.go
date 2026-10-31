@@ -33,6 +33,9 @@ CREATE TABLE IF NOT EXISTS reports(day TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS opslog(id INTEGER PRIMARY KEY AUTOINCREMENT,ts INTEGER NOT NULL,actor TEXT,action TEXT,detail TEXT);
 CREATE TABLE IF NOT EXISTS proto_expiry(tag TEXT PRIMARY KEY,expires_at INTEGER);
 CREATE TABLE IF NOT EXISTS user_cycles(tag TEXT PRIMARY KEY, baseline INTEGER NOT NULL, allowance INTEGER NOT NULL, expires_at INTEGER NOT NULL, started_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS samples_tag_ts ON samples(tag,ts);
+CREATE INDEX IF NOT EXISTS samples_ts_tag ON samples(ts,tag);
+CREATE INDEX IF NOT EXISTS opslog_ts ON opslog(ts);
 CREATE TABLE IF NOT EXISTS user_legacy(user_key TEXT PRIMARY KEY,legacy_tag TEXT NOT NULL UNIQUE);`)
 	if err != nil {
 		db.Close()
@@ -154,6 +157,9 @@ func Human(n int64) string {
 	return ""
 }
 func (s *Store) Sample(ctx context.Context, payload Doc, d Doc) error {
+	return s.SampleAt(ctx, payload, d, time.Now())
+}
+func (s *Store) SampleAt(ctx context.Context, payload Doc, d Doc, now time.Time) error {
 	valid := map[string]bool{}
 	for _, v := range accountingInbounds(d) {
 		valid[str(obj(v)["tag"])] = true
@@ -191,12 +197,12 @@ func (s *Store) Sample(ctx context.Context, payload Doc, d Doc) error {
 		}
 		first := errors.Is(err, sql.ErrNoRows) || tag != oldTag || total < oldTotal
 		if err == nil && tag == oldTag && total > oldTotal {
-			if _, err = tx.ExecContext(ctx, "INSERT INTO samples VALUES(?,?,?)", time.Now().Unix(), oldTag, total-oldTotal); err != nil {
+			if _, err = tx.ExecContext(ctx, "INSERT INTO samples VALUES(?,?,?)", now.Unix(), oldTag, total-oldTotal); err != nil {
 				return err
 			}
 		}
 		if strings.HasPrefix(tag, userPrefix) && first && total > 0 {
-			if _, err = tx.ExecContext(ctx, "INSERT INTO samples VALUES(?,?,?)", time.Now().Unix(), tag, total); err != nil {
+			if _, err = tx.ExecContext(ctx, "INSERT INTO samples VALUES(?,?,?)", now.Unix(), tag, total); err != nil {
 				return err
 			}
 		}

@@ -14,6 +14,23 @@ func (b *Bot) trafficPage(ctx context.Context, m tg.Message, d Doc, st *pending,
 	if e != nil {
 		return e
 	}
+	// These aggregates are scoped to this rendering, never cached across updates.
+	now := time.Now().In(b.TZ)
+	start := Month(now)
+	if period == "day" {
+		start = Day(now)
+	}
+	used, e := b.Store.UsageAll(ctx, start)
+	if e != nil {
+		return e
+	}
+	daily := used
+	if period != "day" {
+		daily, e = b.Store.UsageAll(ctx, Day(now))
+		if e != nil {
+			return e
+		}
+	}
 	blocked := Blocked(d)
 	if period == "blocks" {
 		filtered := []any{}
@@ -43,11 +60,19 @@ func (b *Bot) trafficPage(ctx context.Context, m tg.Message, d Doc, st *pending,
 			}
 			lines = append(lines, text)
 		} else {
-			text, e := b.usage(ctx, d, period, tag)
+			limit, e := b.Store.Limit(ctx, tag)
 			if e != nil {
 				return e
 			}
-			_, text, _ = strings.Cut(text, "\n")
+			quota := Human(limit)
+			if limit == 0 {
+				quota = "不限"
+			}
+			label := "本月"
+			if period == "day" {
+				label = "今日"
+			}
+			text := fmt.Sprintf("%s :%v｜今日 %s｜%s %s / %s", tag, obj(raw)["listen_port"], Human(daily[tag]), label, Human(used[tag]), quota)
 			state := "✅ "
 			if blocked[tag] {
 				state = "⛔ "

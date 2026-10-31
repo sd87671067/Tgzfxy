@@ -105,7 +105,7 @@ allowance, start and expiry. Remaining cycle traffic is allowance minus the
 increase in the existing lifetime samples, including explicitly adopted legacy
 history. Resetting the cycle takes a new baseline and never deletes samples or
 resets connection counters. Month boundaries do not reset a cycle. Existing
-monthly `/limit`, `/setexpiry`, manual pauses and legacy relationships remain
+persisted monthly quotas, `/setexpiry`, manual pauses and legacy relationships remain
 independent constraints; renewing a cycle does not remove those restrictions.
 The collector applies scoped auth_user rejects at its normal polling interval;
 Clash sampling remains an estimate and may miss very short connections. SQLite

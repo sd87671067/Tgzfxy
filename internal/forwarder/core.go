@@ -78,6 +78,7 @@ type Delivery struct {
 	Due, SentAt time.Time
 }
 type Engine struct {
+	Changes    chan struct{}
 	DB         *sql.DB
 	Transport  Transport
 	Bot        *tg.Client
@@ -106,13 +107,22 @@ func Open(path string, t Transport, bot *tg.Client) (*Engine, error) {
 	}
 	_, e = db.Exec(`CREATE TABLE IF NOT EXISTS rules(id INTEGER PRIMARY KEY AUTOINCREMENT, owner INTEGER,
 source INTEGER,target INTEGER,source_label TEXT,target_label TEXT,mode TEXT DEFAULT 'poll',filter TEXT DEFAULT 'black',words TEXT DEFAULT '[]',cursor INTEGER DEFAULT 0,enabled INTEGER DEFAULT 1,retry_minutes INTEGER DEFAULT 5,retry_max INTEGER DEFAULT 6,failure_words TEXT DEFAULT '["分享生成 STRM 文件失败"]',black_words TEXT DEFAULT '[]',white_words TEXT DEFAULT '[]',success_notify INTEGER DEFAULT 0,button_links INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS retry_state(id INTEGER PRIMARY KEY CHECK(id=1),snapshot TEXT NOT NULL);
+INSERT OR IGNORE INTO retry_state VALUES(1,'{}');
 CREATE TABLE IF NOT EXISTS logs(id INTEGER PRIMARY KEY,rule INTEGER,ts INTEGER,message TEXT);
+CREATE INDEX IF NOT EXISTS rules_enabled ON rules(enabled);
+CREATE INDEX IF NOT EXISTS logs_ts ON logs(ts);
 CREATE TABLE IF NOT EXISTS sent(rule INTEGER,mid INTEGER,PRIMARY KEY(rule,mid));`)
 	if e != nil {
 		db.Close()
 		return nil, e
 	}
-	return &Engine{DB: db, Transport: t, Bot: bot, Queue: map[deliveryKey]*Delivery{}, Receipts: map[receiptKey]Receipt{}, States: map[int64]*State{}, Status: "连接中"}, nil
+	engine := &Engine{DB: db, Transport: t, Bot: bot, Queue: map[deliveryKey]*Delivery{}, Receipts: map[receiptKey]Receipt{}, States: map[int64]*State{}, Changes: make(chan struct{}, 1), Status: "空闲（按需连接）"}
+	if err := engine.restoreRetry(context.Background()); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return engine, nil
 }
 func scan(row interface{ Scan(...any) error }) (Rule, error) {
 	var r Rule
@@ -130,8 +140,14 @@ func scan(row interface{ Scan(...any) error }) (Rule, error) {
 	}
 	return r, nil
 }
-func (e *Engine) Rules(ctx context.Context) ([]Rule, error) {
-	rows, err := e.DB.QueryContext(ctx, "SELECT "+columns+" FROM rules ORDER BY id")
+func (e *Engine) Rules(ctx context.Context) ([]Rule, error) { return e.rules(ctx, false) }
+func (e *Engine) rules(ctx context.Context, enabled bool) ([]Rule, error) {
+	query := "SELECT " + columns + " FROM rules"
+	if enabled {
+		query += " WHERE enabled=1"
+	}
+	query += " ORDER BY id"
+	rows, err := e.DB.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -573,9 +589,23 @@ func (e *Engine) drain(ctx context.Context, r Rule) error {
 	}
 	return nil
 }
-func (e *Engine) Tick(ctx context.Context) error {
+func (e *Engine) Tick(ctx context.Context) (result error) {
 	e.Mu.Lock()
 	defer e.Mu.Unlock()
+	defer func() {
+		recovery, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := e.saveRetry(recovery); err != nil {
+			result = errors.Join(result, err)
+		}
+	}()
+	rules, err := e.rules(ctx, true)
+	if err != nil {
+		return err
+	}
+	if len(rules) == 0 {
+		return nil
+	}
 	ready, err := e.Transport.Ready(ctx)
 	if err != nil {
 		return err
@@ -585,10 +615,6 @@ func (e *Engine) Tick(ctx context.Context) error {
 		return nil
 	}
 	e.Status = "用户会话已连接"
-	rules, err := e.Rules(ctx)
-	if err != nil {
-		return err
-	}
 	for _, r := range rules {
 		if r.Enabled {
 			if err = e.drain(ctx, r); err != nil {
@@ -600,10 +626,17 @@ func (e *Engine) Tick(ctx context.Context) error {
 	e.retry(ctx, rules)
 	return nil
 }
-func (e *Engine) Event(ctx context.Context, m Message) error {
+func (e *Engine) Event(ctx context.Context, m Message) (result error) {
 	e.Mu.Lock()
 	defer e.Mu.Unlock()
-	rules, err := e.Rules(ctx)
+	defer func() {
+		recovery, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := e.saveRetry(recovery); err != nil {
+			result = errors.Join(result, err)
+		}
+	}()
+	rules, err := e.rules(ctx, true)
 	if err != nil {
 		return err
 	}

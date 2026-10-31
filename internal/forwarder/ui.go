@@ -204,9 +204,17 @@ func wordsFor(r Rule, cat string) []string {
 	}
 	return nil
 }
-func (e *Engine) Handle(ctx context.Context, m tg.Message, callback, command string, args []string) (bool, error) {
+func (e *Engine) Handle(ctx context.Context, m tg.Message, callback, command string, args []string) (handled bool, result error) {
+	defer e.Changed()
 	e.Mu.Lock()
 	defer e.Mu.Unlock()
+	defer func() {
+		recovery, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := e.saveRetry(recovery); err != nil {
+			result = errors.Join(result, err)
+		}
+	}()
 	owner := m.From.ID
 	st := e.States[owner]
 	if st == nil {

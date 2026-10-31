@@ -222,7 +222,7 @@ func TestAdminCommandsAndButtons(t *testing.T) {
 			t.Fatalf("%s: %v", cmd, err)
 		}
 	}
-	for _, cb := range []string{"proto:menu", "proto:list:0", "proto:exp", "limits", "blocks", "logs", "bind:start", "bind:pick:alice", "bind:pick:direct", "bind:save", "share", "sharepick:alice", "sharedone", "delete:start", "delete:pick:outbound:proxy", "delete:save", "ufw:list", "panel"} {
+	for _, cb := range []string{"proto:menu", "proto:list:0", "proto:exp", "use:month", "blocks", "logs", "bind:start", "bind:pick:alice", "bind:pick:direct", "bind:save", "share", "sharepick:alice", "sharedone", "delete:start", "delete:pick:outbound:proxy", "delete:save", "ufw:list", "panel"} {
 		u := tg.Update{Callback: &tg.Callback{ID: "x", From: m.From, Message: &m, Data: selectedCallback(b.States[m.From.ID], cb)}}
 		if err := b.Handle(ctx, u); err != nil {
 			t.Fatalf("%s: %v", cb, err)
@@ -233,8 +233,8 @@ func TestAdminCommandsAndButtons(t *testing.T) {
 		}
 	}
 	lim, _ = b.Store.Limit(ctx, "alice")
-	if lim != 0 {
-		t.Fatal("limit not saved")
+	if lim != b.Store.DefaultLimit {
+		t.Fatal("removed limit command changed persisted monthly quota")
 	}
 	d, _ := Load(b.Config.Path)
 	if Kind(d, "proxy") != "" {

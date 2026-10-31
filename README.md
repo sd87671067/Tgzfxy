@@ -75,7 +75,7 @@ go run ./cmd/sbbot-plan -config /path/to/source.json \
 - `/adduser 统一入口tag 名称 出站tag [UUID]`：添加独立用户；省略 UUID 时生成新值。
 - `/users` 或「协议管理 → UUID 用户与出站 IP」：点击 UUID → 出站地址 → 一次性确认。
 - `/share user/入口tag/名称`：单用户链接；`/share 统一入口tag` 生成全部用户链接。
-- `/usage`、`/limit`、`/setexpiry`、`/block`、`/unblock` 接受上述用户标识。
+- `/usage`、`/alllimit`、`/setexpiry`、`/block`、`/unblock` 接受上述用户标识。
 - `/adopthistory 用户标识 旧入站tag`：先预览，确认后关联历史流量、继承额度、到期和手动暂停。
 
 出站按钮显示配置中的上游地址，实际落地 IP 须通过独立网络探测确认。
@@ -106,3 +106,13 @@ SING_BOX_BINARY=/usr/local/bin/sing-box go test ./internal/sbbot
 可选 `SBBOT_MAPPING_FIXTURE` 仅用于读取私有配置、验证迁移映射和候选 check，绝不安装或启动该候选。
 
 Behind HAProxy, set `UNIFIED_PUBLIC_PORT=443` so `/share` uses the public port for unified users. Legacy listener links retain their own ports.
+
+### 自然月额度、响应与维护
+
+- 当月流量使用 `TIMEZONE`（默认 `Asia/Shanghai`）自然月窗口；不删除历史、不清空连接基线。启动及每次采集重新计算限制，停机跨月后也自动恢复仅因月额度暂停的用户。手动暂停、原到期时间及 `/alllimit` 周期额度/到期独立生效。
+- 已移除旧月额度命令。数据库 `limits`、历史流量和其他功能共用的限额逻辑保留；使用 `/alllimit 用户标识 [MB] [天]` 设置独立周期。
+- 无启用转发规则时无 MTProto 连接、无 30 秒轮询定时器、无定期规则查询。创建/启停/删除规则发出变更通知；打开登录或绑定时按需连接并给予十分钟会话租期。启用规则后保持实时事件、遗漏补取、过滤和失败重试；队列与回复关联持久化到 `retry_state`，停用不丢弃队列。修改数据库规则的外部工具须重启 Bot 使变更生效。
+- Telegram polling 与管理操作分离；callback 在入队前以三秒超时应答，128 项有界队列以单 worker 按序执行，操作完成后发送/编辑结果。日志记录 `callback_ack` 和 `bot_operation` 耗时。队列仅驻内存，进程异常退出时未执行的管理操作需要重试。
+- `/alllimit` 不再 `VACUUM INTO` 整库；变更前原策略以 0600 权限原子写入 `sbbot.db.policy-recovery.json`，运行中失败恢复旧策略。部署前仍须使用 SQLite backup API 创建独立完整备份。
+- 启动十分钟后、随后每六小时执行限时维护：分批清除超过 24 小时的操作/转发日志和过期转发缓存、轮转日志，仅执行 PASSIVE checkpoint。不删除 samples、limits、user_cycles、sent、retry_state、会话、配置或备份，不执行 VACUUM、不直接删除 WAL/SHM。
+- Docker 建议使用 local 日志驱动，`max-size: 5m`、`max-file: 2`。部署只替换 sbbot 并保留当前健康镜像及回滚版本。

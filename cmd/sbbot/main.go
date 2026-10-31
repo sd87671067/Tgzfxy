@@ -83,14 +83,14 @@ func run() error {
 			if err != nil {
 				return err
 			}
-			var result string
-			err = db.QueryRow("PRAGMA quick_check").Scan(&result)
+			var result int
+			err = db.QueryRow("PRAGMA schema_version").Scan(&result)
 			db.Close()
 			if err != nil {
 				return err
 			}
-			if result != "ok" {
-				return errors.New("database quick_check failed")
+			if result <= 0 {
+				return errors.New("database schema is empty")
 			}
 		}
 		fmt.Println("sbbot configuration and databases OK")
@@ -185,41 +185,8 @@ func run() error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for ctx.Err() == nil {
-				if e := client.Run(ctx); e != nil && ctx.Err() == nil {
-					log.Print("MTProto connection failed; reconnecting")
-				}
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(5 * time.Second):
-				}
-			}
-		}()
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			ticker := time.NewTicker(30 * time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case msg := <-client.Events:
-					jobCtx, done := context.WithTimeout(ctx, 60*time.Second)
-					e := fw.Event(jobCtx, msg)
-					done()
-					if e != nil && ctx.Err() == nil {
-						log.Print("forwarder event failed")
-					}
-				case <-ticker.C:
-					jobCtx, done := context.WithTimeout(ctx, 60*time.Second)
-					e := fw.Tick(jobCtx)
-					done()
-					if e != nil && ctx.Err() == nil {
-						log.Print("forwarder tick failed")
-					}
-				}
+			if err := fw.Serve(ctx, client, client.Events); err != nil && ctx.Err() == nil {
+				log.Print("forwarder stopped: ", err)
 			}
 		}()
 	}
@@ -257,8 +224,27 @@ func run() error {
 			}
 		}
 	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		timer := time.NewTimer(10 * time.Minute)
+		defer timer.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-timer.C:
+			}
+			maintenanceCtx, done := context.WithTimeout(ctx, 30*time.Second)
+			if e := sbbot.Maintenance(maintenanceCtx, dir); e != nil && ctx.Err() == nil {
+				log.Print("maintenance deferred: ", e)
+			}
+			done()
+			timer.Reset(6 * time.Hour)
+		}
+	}()
 	log.Print("sbbot Go started; polling Telegram")
-	return api.Poll(ctx, bot.Handle, func(err error) {
+	return api.PollQueued(ctx, bot.Prepare, bot.Handle, func(err error) {
 		if ctx.Err() == nil {
 			log.Printf("bot request failed: %v", err)
 		}

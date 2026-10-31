@@ -335,7 +335,7 @@ func TestUnifiedHistoryAdoptionPoliciesReportingAndRollback(t *testing.T) {
 	for _, cmd := range []struct {
 		c string
 		a []string
-	}{{"limit", []string{u.Key, "0"}}, {"setexpiry", []string{u.Key, "0"}}, {"usage", []string{u.Key}}} {
+	}{{"setexpiry", []string{u.Key, "0"}}, {"usage", []string{u.Key}}} {
 		if err = b.command(ctx, m, cmd.c, cmd.a, st); err != nil {
 			t.Fatal(cmd, err)
 		}

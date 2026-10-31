@@ -179,7 +179,7 @@ func Blocked(d Doc) map[string]bool {
 	out := map[string]bool{}
 	for _, v := range list(obj(d["route"])["rules"]) {
 		r := obj(v)
-		if str(r["action"]) == "reject" {
+		if str(r["action"]) == "reject" && len(r) == 3 {
 			for _, u := range UnifiedUsers(d) {
 				if ruleForUser(r, u) {
 					out[u.Key] = true
@@ -224,7 +224,7 @@ func SetBlockedDoc(d Doc, tags map[string]bool) {
 			continue
 		}
 		pause := false
-		if str(r["action"]) == "reject" {
+		if str(r["action"]) == "reject" && len(r) == 3 {
 			for _, u := range UnifiedUsers(d) {
 				if ruleForUser(r, u) {
 					pause = true

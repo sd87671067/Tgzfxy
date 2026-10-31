@@ -10,11 +10,15 @@ import (
 )
 
 func (b *Bot) enforce(ctx context.Context, d Doc) error {
+	return b.enforceAt(ctx, d, time.Now())
+}
+
+func (b *Bot) enforceAt(ctx context.Context, d Doc, now time.Time) error {
 	target, err := b.Store.Manual(ctx)
 	if err != nil {
 		return err
 	}
-	used, err := b.Store.UsageAll(ctx, Month(time.Now().In(b.TZ)))
+	used, err := b.Store.UsageAll(ctx, Month(now.In(b.TZ)))
 	if err != nil {
 		return err
 	}
@@ -40,9 +44,9 @@ func (b *Bot) enforce(ctx context.Context, d Doc) error {
 			if e != nil {
 				return e
 			}
-			cycleBlocked = total-cycle.Baseline >= cycle.Allowance || time.Now().Unix() >= cycle.Expires
+			cycleBlocked = total-cycle.Baseline >= cycle.Allowance || now.Unix() >= cycle.Expires
 		}
-		if cycleBlocked || lim > 0 && used[tag] >= lim || expiry > 0 && expiry <= time.Now().Unix() {
+		if cycleBlocked || lim > 0 && used[tag] >= lim || expiry > 0 && expiry <= now.Unix() {
 			target[tag] = true
 		}
 	}
@@ -75,17 +79,18 @@ func (b *Bot) Collect(ctx context.Context) error {
 	requestCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	payload, err := JSONGet(requestCtx, b.HTTP, b.APIURL+"/connections", headers)
 	cancel()
-	if err != nil {
-		return err
-	}
+	// Reconcile persisted restrictions even when the traffic API is unavailable.
+	sampleErr := err
 	b.Mu.Lock()
 	defer b.Mu.Unlock()
 	d, err := Load(b.Config.Path)
 	if err != nil {
 		return err
 	}
-	if err = b.Store.Sample(ctx, payload, d); err != nil {
-		return err
+	if sampleErr == nil {
+		if err = b.Store.Sample(ctx, payload, d); err != nil {
+			return err
+		}
 	}
 	current := Blocked(d)
 	if err = b.enforce(ctx, d); err != nil {
@@ -111,7 +116,7 @@ func (b *Bot) Collect(ctx context.Context) error {
 			}
 		}
 	}
-	return nil
+	return sampleErr
 }
 func (b *Bot) Daily(ctx context.Context, hour int) error {
 	now := time.Now().In(b.TZ)

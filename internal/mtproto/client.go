@@ -102,6 +102,9 @@ type peer struct {
 	Left           bool
 }
 type Client struct {
+	starter   func(context.Context) error
+	connected chan struct{}
+	factory   func() *telegram.Client
 	Client    *telegram.Client
 	api       *tg.Client
 	Connected atomic.Bool
@@ -113,7 +116,7 @@ type Client struct {
 }
 
 func New(ctx context.Context, id int, hash, dir string) (*Client, error) {
-	c := &Client{peers: map[int64]peer{}, peerPath: filepath.Join(dir, "forwarder-go-peers.json"), Events: make(chan forwarder.Message, 128)}
+	c := &Client{connected: make(chan struct{}), peers: map[int64]peer{}, peerPath: filepath.Join(dir, "forwarder-go-peers.json"), Events: make(chan forwarder.Message, 128)}
 	raw, err := os.ReadFile(c.peerPath)
 	if err == nil {
 		if err = json.Unmarshal(raw, &c.peers); err != nil {
@@ -189,14 +192,34 @@ func New(ctx context.Context, id int, hash, dir string) (*Client, error) {
 		c.entities(en.Users, en.Chats, en.Channels)
 		return emit(ctx, u.Message)
 	})
-	c.Client = telegram.NewClient(id, hash, telegram.Options{SessionStorage: atomicStorage{filepath.Join(dir, "forwarder-go-session.json")}, UpdateHandler: dispatcher})
+	c.factory = func() *telegram.Client {
+		return telegram.NewClient(id, hash, telegram.Options{SessionStorage: atomicStorage{filepath.Join(dir, "forwarder-go-session.json")}, UpdateHandler: dispatcher})
+	}
+	c.Client = c.factory()
 	c.api = c.Client.API()
 	return c, nil
 }
+func (c *Client) apiClient() *tg.Client            { c.mu.Lock(); defer c.mu.Unlock(); return c.api }
+func (c *Client) telegramClient() *telegram.Client { c.mu.Lock(); defer c.mu.Unlock(); return c.Client }
+func (c *Client) SetStarter(start func(context.Context) error) {
+	c.mu.Lock()
+	c.starter = start
+	c.mu.Unlock()
+}
 func (c *Client) Run(ctx context.Context) error {
-	return c.Client.Run(ctx, func(ctx context.Context) error {
+	// gotd clients cannot Run again after cancellation. Recreate the network
+	// client while retaining the same atomic session store, peer cache and events.
+	c.mu.Lock()
+	c.Client = c.factory()
+	c.api = c.Client.API()
+	client := c.Client
+	c.mu.Unlock()
+	return client.Run(ctx, func(ctx context.Context) error {
+		c.mu.Lock()
 		c.Connected.Store(true)
-		defer c.Connected.Store(false)
+		close(c.connected)
+		c.mu.Unlock()
+		defer func() { c.mu.Lock(); c.Connected.Store(false); c.connected = make(chan struct{}); c.mu.Unlock() }()
 		<-ctx.Done()
 		return ctx.Err()
 	})
@@ -205,7 +228,7 @@ func (c *Client) Run(ctx context.Context) error {
 // Probe verifies the migrated session without subscribing to application events.
 func (c *Client) Probe(ctx context.Context) error {
 	return c.Client.Run(ctx, func(ctx context.Context) error {
-		status, err := c.Client.Auth().Status(ctx)
+		status, err := c.telegramClient().Auth().Status(ctx)
 		if err != nil {
 			return safe(err)
 		}
@@ -292,9 +315,23 @@ func (c *Client) input(id int64) (tg.InputPeerClass, error) {
 }
 func (c *Client) Ready(ctx context.Context) (bool, error) {
 	if !c.Connected.Load() {
-		return false, errors.New("Telegram 连接尚未就绪")
+		c.mu.Lock()
+		start := c.starter
+		ready := c.connected
+		c.mu.Unlock()
+		if start == nil {
+			return false, errors.New("Telegram 连接尚未就绪")
+		}
+		if err := start(ctx); err != nil {
+			return false, err
+		}
+		select {
+		case <-ready:
+		case <-ctx.Done():
+			return false, ctx.Err()
+		}
 	}
-	s, err := c.Client.Auth().Status(ctx)
+	s, err := c.telegramClient().Auth().Status(ctx)
 	if err != nil {
 		return false, safe(err)
 	}
@@ -329,7 +366,7 @@ func (c *Client) Resolve(ctx context.Context, value string) (int64, bool, error)
 		path := strings.Trim(u.Path, "/")
 		if strings.HasPrefix(path, "+") || strings.HasPrefix(path, "joinchat/") {
 			hash := strings.TrimPrefix(strings.TrimPrefix(path, "+"), "joinchat/")
-			invite, err := c.api.MessagesCheckChatInvite(ctx, hash)
+			invite, err := c.apiClient().MessagesCheckChatInvite(ctx, hash)
 			if err != nil {
 				return 0, false, safe(err)
 			}
@@ -361,7 +398,7 @@ func (c *Client) Resolve(ctx context.Context, value string) (int64, bool, error)
 	if !regexp.MustCompile(`^[A-Za-z0-9_]+$`).MatchString(domain) {
 		return 0, false, errors.New("Telegram 用户名无效")
 	}
-	resolved, err := c.api.ContactsResolveUsername(ctx, &tg.ContactsResolveUsernameRequest{Username: domain})
+	resolved, err := c.apiClient().ContactsResolveUsername(ctx, &tg.ContactsResolveUsernameRequest{Username: domain})
 	if err != nil {
 		return 0, false, safe(err)
 	}
@@ -442,7 +479,7 @@ func (c *Client) History(ctx context.Context, id int64, cursor int, latest bool)
 	if latest {
 		req = &tg.MessagesGetHistoryRequest{Peer: p, Limit: 1}
 	}
-	result, err := c.api.MessagesGetHistory(ctx, req)
+	result, err := c.apiClient().MessagesGetHistory(ctx, req)
 	if err != nil {
 		return nil, safe(err)
 	}
@@ -459,9 +496,9 @@ func (c *Client) Message(ctx context.Context, chat int64, id int) (*forwarder.Me
 	}
 	var result tg.MessagesMessagesClass
 	if channel, ok := p.(*tg.InputPeerChannel); ok {
-		result, err = c.api.ChannelsGetMessages(ctx, &tg.ChannelsGetMessagesRequest{Channel: &tg.InputChannel{ChannelID: channel.ChannelID, AccessHash: channel.AccessHash}, ID: []tg.InputMessageClass{&tg.InputMessageID{ID: id}}})
+		result, err = c.apiClient().ChannelsGetMessages(ctx, &tg.ChannelsGetMessagesRequest{Channel: &tg.InputChannel{ChannelID: channel.ChannelID, AccessHash: channel.AccessHash}, ID: []tg.InputMessageClass{&tg.InputMessageID{ID: id}}})
 	} else {
-		result, err = c.api.MessagesGetMessages(ctx, []tg.InputMessageClass{&tg.InputMessageID{ID: id}})
+		result, err = c.apiClient().MessagesGetMessages(ctx, []tg.InputMessageClass{&tg.InputMessageID{ID: id}})
 	}
 	if err != nil {
 		return nil, safe(err)
@@ -519,7 +556,7 @@ func (c *Client) Forward(ctx context.Context, target int64, m forwarder.Message)
 	if err != nil {
 		return nil, err
 	}
-	result, err := c.api.MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{FromPeer: from, ToPeer: to, ID: []int{m.ID}, RandomID: []int64{randomID()}})
+	result, err := c.apiClient().MessagesForwardMessages(ctx, &tg.MessagesForwardMessagesRequest{FromPeer: from, ToPeer: to, ID: []int{m.ID}, RandomID: []int64{randomID()}})
 	if err != nil {
 		return nil, safe(err)
 	}
@@ -530,7 +567,7 @@ func (c *Client) Send(ctx context.Context, target int64, text string) ([]int, er
 	if err != nil {
 		return nil, err
 	}
-	result, err := c.api.MessagesSendMessage(ctx, &tg.MessagesSendMessageRequest{Peer: p, Message: text, RandomID: randomID()})
+	result, err := c.apiClient().MessagesSendMessage(ctx, &tg.MessagesSendMessageRequest{Peer: p, Message: text, RandomID: randomID()})
 	if err != nil {
 		return nil, safe(err)
 	}
@@ -541,7 +578,7 @@ func (c *Client) Click(ctx context.Context, m forwarder.Message, b forwarder.But
 	if err != nil {
 		return "", "", err
 	}
-	result, err := c.api.MessagesGetBotCallbackAnswer(ctx, &tg.MessagesGetBotCallbackAnswerRequest{Peer: p, MsgID: m.ID, Data: b.Data})
+	result, err := c.apiClient().MessagesGetBotCallbackAnswer(ctx, &tg.MessagesGetBotCallbackAnswerRequest{Peer: p, MsgID: m.ID, Data: b.Data})
 	if err != nil {
 		return "", "", safe(err)
 	}
@@ -590,10 +627,10 @@ func (c *Client) Download(ctx context.Context, m forwarder.Message) (io.ReadClos
 		return nil, "", err
 	}
 	out := tempFile{file}
-	var rpc downloader.Client = c.api
+	var rpc downloader.Client = c.apiClient()
 	var closer io.Closer
 	if dc != 0 {
-		pool, err := c.Client.DC(ctx, dc, 1)
+		pool, err := c.telegramClient().DC(ctx, dc, 1)
 		if err != nil {
 			out.Close()
 			return nil, "", safe(err)
@@ -616,7 +653,7 @@ func (c *Client) Download(ctx context.Context, m forwarder.Message) (io.ReadClos
 	return out, name, nil
 }
 func (c *Client) SendCode(ctx context.Context, phone string) (string, error) {
-	v, err := c.Client.Auth().SendCode(ctx, phone, auth.SendCodeOptions{})
+	v, err := c.telegramClient().Auth().SendCode(ctx, phone, auth.SendCodeOptions{})
 	if err != nil {
 		return "", safe(err)
 	}
@@ -626,14 +663,14 @@ func (c *Client) SendCode(ctx context.Context, phone string) (string, error) {
 	return "", errors.New("login code not required or unsupported delivery")
 }
 func (c *Client) SignIn(ctx context.Context, phone, code, hash string) error {
-	_, err := c.Client.Auth().SignIn(ctx, phone, code, hash)
+	_, err := c.telegramClient().Auth().SignIn(ctx, phone, code, hash)
 	if errors.Is(err, auth.ErrPasswordAuthNeeded) {
 		return forwarder.ErrPasswordNeeded
 	}
 	return safe(err)
 }
 func (c *Client) Password(ctx context.Context, password string) error {
-	_, err := c.Client.Auth().Password(ctx, password)
+	_, err := c.telegramClient().Auth().Password(ctx, password)
 	return safe(err)
 }
 

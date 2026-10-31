@@ -183,7 +183,7 @@ func (b *Bot) callback(ctx context.Context, m tg.Message, cb string, st *pending
 	if strings.HasPrefix(cb, "traffic:") {
 		return b.trafficCallback(ctx, m, d, cb, st)
 	}
-	if strings.HasPrefix(cb, "use:") || cb == "limits" || cb == "blocks" {
+	if strings.HasPrefix(cb, "use:") || cb == "blocks" {
 		period := strings.TrimPrefix(cb, "use:")
 		return b.trafficPage(ctx, m, d, st, period, 0, true)
 	}
