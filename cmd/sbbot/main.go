@@ -224,7 +224,7 @@ func run() error {
 		}()
 	}
 	commands := []map[string]string{}
-	for _, v := range [][2]string{{"panel", "打开操作面板"}, {"bind", "添加转发规则"}, {"switch", "切换规则设置"}, {"cs", "设置转发重试"}, {"cancel", "取消操作"}, {"today", "今日流量"}, {"month", "本月流量"}, {"status", "流量状态"}, {"share", "生成分享链接"}, {"addout", "添加出站"}, {"addvless", "添加VLESS入站"}, {"addhy2", "添加Hysteria2入站"}, {"addanytls", "添加AnyTLS入站"}, {"add", "快速添加协议"}, {"protocols", "查看入站"}, {"setexpiry", "设置有效期"}, {"bwh", "搬瓦工管理"}, {"help", "帮助"}} {
+	for _, v := range [][2]string{{"panel", "打开操作面板"}, {"bind", "添加转发规则"}, {"switch", "切换规则设置"}, {"cs", "设置转发重试"}, {"cancel", "取消操作"}, {"today", "今日流量"}, {"month", "本月流量"}, {"status", "流量状态"}, {"share", "生成分享链接"}, {"alllimit", "设置用户流量与天数"}, {"addout", "添加出站"}, {"addvless", "添加VLESS入站"}, {"addhy2", "添加Hysteria2入站"}, {"addanytls", "添加AnyTLS入站"}, {"add", "快速添加协议"}, {"protocols", "查看入站"}, {"setexpiry", "设置有效期"}, {"bwh", "搬瓦工管理"}, {"help", "帮助"}} {
 		if bot.CommandAvailable(v[0]) {
 			commands = append(commands, map[string]string{"command": v[0], "description": v[1]})
 		}

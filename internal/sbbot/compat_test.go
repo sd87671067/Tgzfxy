@@ -223,7 +223,7 @@ func TestAdminCommandsAndButtons(t *testing.T) {
 		}
 	}
 	for _, cb := range []string{"proto:menu", "proto:list:0", "proto:exp", "limits", "blocks", "logs", "bind:start", "bind:pick:alice", "bind:pick:direct", "bind:save", "share", "sharepick:alice", "sharedone", "delete:start", "delete:pick:outbound:proxy", "delete:save", "ufw:list", "panel"} {
-		u := tg.Update{Callback: &tg.Callback{ID: "x", From: m.From, Message: &m, Data: cb}}
+		u := tg.Update{Callback: &tg.Callback{ID: "x", From: m.From, Message: &m, Data: selectedCallback(b.States[m.From.ID], cb)}}
 		if err := b.Handle(ctx, u); err != nil {
 			t.Fatalf("%s: %v", cb, err)
 		}

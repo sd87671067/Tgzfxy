@@ -42,7 +42,7 @@ func TestSelectionPanel(t *testing.T) {
 	m := tg.Message{ID: 42, Chat: tg.Chat{ID: 7}}
 	st := &pending{Mode: "bind"}
 	for _, cb := range []string{"bind:pick:in1", "bind:pick:in2", "bind:pick:out1", "bind:pick:out2"} {
-		if err := b.callback(context.Background(), m, cb, st); err != nil {
+		if err := b.callback(context.Background(), m, selectedCallback(st, cb), st); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -55,7 +55,7 @@ func TestSelectionPanel(t *testing.T) {
 	if len(body.Keyboard.Rows[0]) != 2 || len(body.Keyboard.Rows[1]) != 1 || len(body.Keyboard.Rows[2]) != 2 {
 		t.Fatalf("layout: %+v", body.Keyboard)
 	}
-	if err := b.callback(context.Background(), m, "bind:pick:in1", st); err != nil {
+	if err := b.callback(context.Background(), m, selectedCallback(st, "bind:pick:in1"), st); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Join(st.Tags, ",") != "in2,out2" {

@@ -455,6 +455,14 @@ func ShareLinks(d Doc, tags []string, host, domain string, unifiedPort ...int) (
 	var links []string
 	var expanded []string
 	for _, tag := range tags {
+		if Kind(d, tag) == "" {
+			key, err := resolveUnified(d, tag)
+			if err == nil {
+				tag = key
+			} else if err.Error() == "用户名称重复，请使用完整用户标识" {
+				return nil, err
+			}
+		}
 		found := false
 		for _, u := range UnifiedUsers(d) {
 			if u.Inbound == tag {
@@ -548,7 +556,11 @@ func ShareLinks(d Doc, tags []string, host, domain string, unifiedPort ...int) (
 			port = strconv.Itoa(unifiedPort[0])
 		}
 		address := net.JoinHostPort(host, port)
-		u := url.URL{Scheme: kind, User: url.User(auth), Host: address, Path: path, RawQuery: params.Encode(), Fragment: tag}
+		label := tag
+		if scoped {
+			label = selected.Name
+		}
+		u := url.URL{Scheme: kind, User: url.User(auth), Host: address, Path: path, RawQuery: params.Encode(), Fragment: label}
 		links = append(links, u.String())
 	}
 	return links, nil
@@ -558,6 +570,7 @@ type ConfigManager struct {
 	Path, Domain, Cert, Key, SNI string
 	UnifiedPublicPort            int
 	Probe                        func(context.Context, Doc, string) (string, error)
+	RealityCheck                 func(context.Context, string, string, int) error
 	AutoRestart                  bool
 	Run                          func(context.Context, string, ...string) (string, error)
 }

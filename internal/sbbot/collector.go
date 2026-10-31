@@ -30,7 +30,19 @@ func (b *Bot) enforce(ctx context.Context, d Doc) error {
 		if err != nil {
 			return err
 		}
-		if lim > 0 && used[tag] >= lim || expiry > 0 && expiry <= time.Now().Unix() {
+		cycle, e := b.Store.Cycle(ctx, tag)
+		if e != nil {
+			return e
+		}
+		cycleBlocked := false
+		if cycle != nil {
+			total, e := b.Store.Usage(ctx, tag, time.Unix(0, 0))
+			if e != nil {
+				return e
+			}
+			cycleBlocked = total-cycle.Baseline >= cycle.Allowance || time.Now().Unix() >= cycle.Expires
+		}
+		if cycleBlocked || lim > 0 && used[tag] >= lim || expiry > 0 && expiry <= time.Now().Unix() {
 			target[tag] = true
 		}
 	}

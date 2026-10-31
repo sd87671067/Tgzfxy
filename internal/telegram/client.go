@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -124,7 +125,12 @@ func (c *Client) Edit(ctx context.Context, chat, mid int64, text string, k *Keyb
 	if html {
 		p["parse_mode"] = "HTML"
 	}
-	return c.Call(ctx, "editMessageText", p, nil)
+	err := c.Call(ctx, "editMessageText", p, nil)
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && strings.Contains(apiErr.Description, "message is not modified") {
+		return nil
+	}
+	return err
 }
 func (c *Client) Answer(ctx context.Context, id, text string) error {
 	return c.Call(ctx, "answerCallbackQuery", map[string]any{"callback_query_id": id, "text": text, "show_alert": text != ""}, nil)

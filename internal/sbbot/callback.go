@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func (b *Bot) selection(ctx context.Context, m tg.Message, d Doc, st *pending) error {
@@ -35,9 +36,7 @@ func (b *Bot) selection(ctx context.Context, m tg.Message, d Doc, st *pending) e
 			if st.Mode == "share" {
 				data = "sharepick:" + tag
 			}
-			if len([]byte(data)) > 64 {
-				continue
-			}
+
 			row = append(row, tg.B(label, data))
 			if len(row) == 2 {
 				k.Rows = append(k.Rows, row)
@@ -58,7 +57,60 @@ func (b *Bot) selection(ctx context.Context, m tg.Message, d Doc, st *pending) e
 	} else if st.Mode == "delete" {
 		label, text = "确认删除", "选择要删除的入站或出站，然后点击确认删除"
 	}
-	k.Rows = append(k.Rows, []tg.Button{tg.B(label, done), tg.B("取消", "cancel")})
+
+	// Paginate existing selection rows; keep the established selection/save logic.
+	count := 0
+	for _, row := range k.Rows {
+		count += len(row)
+	}
+	pages := max(1, (count+userPageSize-1)/userPageSize)
+	st.Page = max(0, min(st.Page, pages-1))
+	first, last := st.Page*userPageSize, min((st.Page+1)*userPageSize, count)
+	rows := [][]tg.Button{}
+	index := 0
+	for _, row := range k.Rows {
+		visible := []tg.Button{}
+		for _, button := range row {
+			if index >= first && index < last {
+				visible = append(visible, button)
+			}
+			index++
+		}
+		if len(visible) > 0 {
+			rows = append(rows, visible)
+		}
+	}
+	k.Rows = rows
+	nav := []tg.Button{}
+	if st.Page > 0 {
+		nav = append(nav, tg.B("上一页", fmt.Sprintf("page:%d", st.Page-1)))
+	}
+	nav = append(nav, tg.B(fmt.Sprintf("%d / %d", st.Page+1, pages), "noop"))
+	if st.Page+1 < pages {
+		nav = append(nav, tg.B("下一页", fmt.Sprintf("page:%d", st.Page+1)))
+	}
+	k.Rows = append(k.Rows, nav, []tg.Button{tg.B(label, done), tg.B("返回", "proto:menu")})
+	token, e := randomHex(8)
+	if e != nil {
+		return e
+	}
+	st.Token = token
+	st.Version = configVersion(d)
+	st.ChatID = m.Chat.ID
+	st.MessageID = m.ID
+	st.Until = time.Now().Add(5 * time.Minute)
+	st.Healthy = map[string]string{}
+	for i, row := range k.Rows {
+		for j, button := range row {
+			if button.Data == "proto:menu" {
+				continue
+			}
+			id := ref(button.Data)
+			st.Healthy[id] = button.Data
+			k.Rows[i][j].Data = "select:" + token + ":" + id
+		}
+	}
+
 	err := b.API.Edit(ctx, m.Chat.ID, m.ID, text, k, false)
 	var apiErr *tg.APIError
 	if errors.As(err, &apiErr) && strings.Contains(apiErr.Description, "message is not modified") {
@@ -94,6 +146,31 @@ func (b *Bot) callback(ctx context.Context, m tg.Message, cb string, st *pending
 	if err != nil {
 		return err
 	}
+	if strings.HasPrefix(cb, "select:") {
+		p := strings.Split(cb, ":")
+		if len(p) != 3 || p[1] != st.Token || st.Token == "" || st.ChatID != m.Chat.ID || st.MessageID != m.ID || time.Now().After(st.Until) || st.Version != configVersion(d) {
+			return errors.New("列表已过期，请重新打开")
+		}
+		original := st.Healthy[p[2]]
+		if original == "" {
+			return errors.New("按钮已失效")
+		}
+		if original == "noop" {
+			return nil
+		}
+		if strings.HasPrefix(original, "page:") {
+			page, e := callbackPage(strings.TrimPrefix(original, "page:"))
+			if e != nil {
+				return e
+			}
+			st.Page = page
+			return b.selection(ctx, m, d, st)
+		}
+		st.Token = ""
+		cb = original
+	} else if st.Token != "" && (strings.HasPrefix(cb, "sharepick:") || strings.HasPrefix(cb, "bind:pick:") || strings.HasPrefix(cb, "delete:pick:") || cb == "sharedone" || cb == "bind:save" || cb == "delete:save") {
+		return errors.New("旧按钮已失效，请重新打开列表")
+	}
 	if strings.HasPrefix(cb, "unified:") {
 		return b.unifiedMenu(ctx, m, d, cb, st)
 	}
@@ -103,30 +180,14 @@ func (b *Bot) callback(ctx context.Context, m tg.Message, cb string, st *pending
 	if strings.HasPrefix(cb, "proto:list:") {
 		return b.protocols(ctx, m, d, int(integer(strings.TrimPrefix(cb, "proto:list:"))))
 	}
-	if strings.HasPrefix(cb, "use:") || cb == "limits" {
+	if strings.HasPrefix(cb, "traffic:") {
+		return b.trafficCallback(ctx, m, d, cb, st)
+	}
+	if strings.HasPrefix(cb, "use:") || cb == "limits" || cb == "blocks" {
 		period := strings.TrimPrefix(cb, "use:")
-		text, err := b.usage(ctx, d, period, "")
-		if err != nil {
-			return err
-		}
-		return reply(text + "\n修改限额：/limit tag GiB")
+		return b.trafficPage(ctx, m, d, st, period, 0, true)
 	}
-	if cb == "blocks" {
-		tags := Blocked(d)
-		manual, err := b.Store.Manual(ctx)
-		if err != nil {
-			return err
-		}
-		lines := []string{"已暂停的入站："}
-		for t := range tags {
-			reason := "超限或到期"
-			if manual[t] {
-				reason = "手动"
-			}
-			lines = append(lines, t+"（"+reason+"）")
-		}
-		return reply(strings.Join(lines, "\n") + "\n/block tag 暂停\n/unblock tag 恢复")
-	}
+
 	if cb == "share" || cb == "bind:start" || cb == "delete:start" {
 		mode := strings.Split(cb, ":")[0]
 		*st = pending{Mode: mode}

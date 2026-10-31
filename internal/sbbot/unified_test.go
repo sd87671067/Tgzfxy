@@ -201,7 +201,7 @@ func TestUnifiedTelegramConfirmationOwnershipStalenessAndReplay(t *testing.T) {
 	if e := b.userCallback(ctx, m, d, "user:change:"+token+":"+ref(u.Key), st); e != nil {
 		t.Fatal(e)
 	}
-	if e := b.userCallback(ctx, m, d, "user:out:"+token+":"+ref("proxy"), st); e != nil {
+	if e := b.userCallback(ctx, m, d, "user:out:"+st.Token+":"+ref("proxy"), st); e != nil {
 		t.Fatal(e)
 	}
 	cb := "user:confirm:" + st.Token + ":" + ref(u.Key)
@@ -459,7 +459,12 @@ func TestUnifiedVerifiedBindingRollsBackWrongExit(t *testing.T) {
 	}
 	m.ID = st.MessageID
 	u := UnifiedUsers(d)[0]
-	for _, cb := range []string{"user:pick:" + st.Token + ":" + ref(u.Key), "user:change:" + st.Token + ":" + ref(u.Key), "user:out:" + st.Token + ":" + ref("proxy")} {
+	for _, action := range []string{"pick", "change", "out"} {
+		target := u.Key
+		if action == "out" {
+			target = "proxy"
+		}
+		cb := "user:" + action + ":" + st.Token + ":" + ref(target)
 		if e := b.userCallback(ctx, m, d, cb, st); e != nil {
 			t.Fatal(e)
 		}
@@ -500,7 +505,8 @@ func TestUnifiedHealthyChoicesAndFeatureGate(t *testing.T) {
 			t.Fatal(e)
 		}
 	}
-	if st.Healthy["proxy"] != "" || st.Healthy["direct"] != "192.0.2.1" {
+	// Candidates are paginated without probing all exits; probe the selected exit.
+	if st.Healthy["proxy"] != "example.org" || st.Healthy["direct"] != "本机出口" {
 		t.Fatal(st.Healthy)
 	}
 	if e := b.userCallback(ctx, m, d, "user:out:"+st.Token+":"+ref("proxy"), st); e == nil {

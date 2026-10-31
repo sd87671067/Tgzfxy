@@ -54,7 +54,7 @@ Bot nor changes production listeners, firewalls or authorization services.
 
 The administrator panel includes a unified entry menu. Binding follows user →
 change outbound → healthy outbound and observed exit IP → confirmation. The
-production ConfigManager probes each candidate using a temporary loopback
+production ConfigManager probes the selected candidate using a temporary loopback
 sing-box client, checks the chosen exit again before applying, then performs a
 REALITY/Vision request as that user through the public SNI listener. An exit IP
 mismatch or failed request restores the previous configuration and service.
@@ -62,7 +62,7 @@ Probes never change user limits, expiry, pause state or accounting history.
 
 Host prerequisites for these probes are Python 3, curl and sing-box; generated
 probe configurations have mode 0600 and are removed along with their subprocesses.
-Unreachable exits are omitted from binding choices, but are not automatically
+Outbound choices are paginated; unreachable exits fail their selection probe, but are not automatically
 deleted: deletion requires repeated authentication failures and a reviewed private
 manifest. Production credentials, UUIDs, links, mappings and backups stay off Git.
 
@@ -79,3 +79,50 @@ Keep old healthy VLESS listeners until every retained UUID succeeds through publ
 protocols and unrelated services. Copy legacy policy and attach history by user
 key in a transaction; retain samples and audit rows. Rollback removes only the
 migration's new policy and mapping rows, never overwrites a live database snapshot.
+
+
+## Unified management and independent cycle policy
+
+The home menu's unified entry owns users, outbound binding, REALITY camouflage,
+per-user shares, traffic/expiry and listener settings. Protocol management retains
+its original commands and legacy protocol features, without duplicate user buttons.
+User, outbound, binding, traffic and share selections use eight items per page.
+Selection callbacks carry short references and expiring tokens bound to the
+administrator session, chat, message and configuration version. Navigation edits
+the existing message; mutations consume confirmations and refresh the list.
+
+`/share zs` resolves a unique unified user name; full user keys and all existing
+multi-tag/protocol shares remain supported. Exact legacy inbound tags retain
+precedence when a short name collides. Duplicate unified names require full keys.
+The VLESS URL uses the public port, UUID, REALITY public key, SNI, short ID and
+Vision flow. Copy instructions describe long-press and v2rayN clipboard import;
+ordinary Telegram buttons do not access the system clipboard.
+
+`/alllimit zs` grants 512000 MiB for 30 days; `/alllimit zs 2048 7` grants 2048 MiB
+for seven days. Positive integer validation and checked byte conversion precede
+all writes. The persisted `user_cycles` record stores lifetime-usage baseline,
+allowance, start and expiry. Remaining cycle traffic is allowance minus the
+increase in the existing lifetime samples, including explicitly adopted legacy
+history. Resetting the cycle takes a new baseline and never deletes samples or
+resets connection counters. Month boundaries do not reset a cycle. Existing
+monthly `/limit`, `/setexpiry`, manual pauses and legacy relationships remain
+independent constraints; renewing a cycle does not remove those restrictions.
+The collector applies scoped auth_user rejects at its normal polling interval;
+Clash sampling remains an estimate and may miss very short connections. SQLite
+is backed up before setting a cycle; failed config applications restore the old
+policy. Persisted desired policy is re-enforced by collection after restart.
+
+REALITY editing accepts `domain` (SNI and handshake:443) or
+`SNI-domain handshake-domain:port`. DNS, public addresses, certificate validation,
+TLS 1.3 and h2 are required before preview and again on confirmation. Literal
+HAProxy SNI collisions and unsupported complex ACLs fail closed. Application
+checks a sing-box candidate, backs up configs, updates only the managed HAProxy
+REALITY ACL, validates/reloads HAProxy, and probes an existing UUID through the
+public listener. Failure restores sing-box and HAProxy; UUIDs, keys and short IDs
+are retained. Host Python3, curl, HAProxy and systemd are prerequisites.
+
+Formal tests run only in an isolated `sd87671067/go-emby-test` checkout. Directed
+coverage includes parser bounds, clipboard URL fields, session/replay guards,
+partial pages, cycle persistence/month independence, policy/config rollback,
+HAProxy reload rollback, and real sing-box REALITY/Vision UUID isolation including
+cycle exhaustion, renewal and expiry. No full or race suite is required.

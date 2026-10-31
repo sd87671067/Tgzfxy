@@ -28,8 +28,14 @@ func (b *Bot) userPage(ctx context.Context, m tg.Message, d Doc, st *pending, pa
 	page = max(0, min(page, pages-1))
 	next := pending{Mode: "users", Token: token, Version: configVersion(d), Until: time.Now().Add(5 * time.Minute), ChatID: m.Chat.ID, Page: page}
 	k := tg.K()
+	summaries := []string{}
 	for _, u := range users[min(page*userPageSize, len(users)):min((page+1)*userPageSize, len(users))] {
 		label := u.Name + " → " + u.Outbound
+		status, e := b.userStatus(ctx, d, u)
+		if e != nil {
+			return e
+		}
+		summaries = append(summaries, status)
 		k.Rows = append(k.Rows, []tg.Button{tg.B(label, "user:pick:"+token+":"+ref(u.Key))})
 	}
 	nav := []tg.Button{}
@@ -41,8 +47,8 @@ func (b *Bot) userPage(ctx context.Context, m tg.Message, d Doc, st *pending, pa
 		nav = append(nav, tg.B("下一页", fmt.Sprintf("user:page:%s:%d", token, page+1)))
 	}
 	k.Rows = append(k.Rows, nav)
-	k.Rows = append(k.Rows, []tg.Button{tg.B("添加用户", "user:add"), tg.B("返回", "panel")})
-	text := fmt.Sprintf("入站用户绑定（共 %d 人，第 %d / %d 页）\n点击用户查看当前绑定，再选择出站并确认保存。", len(users), page+1, pages)
+	k.Rows = append(k.Rows, []tg.Button{tg.B("添加用户", "user:add"), tg.B("返回", "unified:menu")})
+	text := fmt.Sprintf("入站用户绑定（共 %d 人，第 %d / %d 页）\n点击用户查看当前绑定，再选择出站并确认保存。", len(users), page+1, pages) + "\n" + strings.Join(summaries, "\n")
 	if edit {
 		err = b.API.Edit(ctx, m.Chat.ID, m.ID, text, k, false)
 		next.MessageID = m.ID
@@ -58,10 +64,14 @@ func (b *Bot) userPage(ctx context.Context, m tg.Message, d Doc, st *pending, pa
 }
 func (b *Bot) userCallback(ctx context.Context, m tg.Message, d Doc, cb string, st *pending) error {
 	if cb == "user:list" {
-		return b.userMenu(ctx, m, d, st)
+		return b.userPage(ctx, m, d, st, 0, true)
 	}
 	if cb == "user:add" {
-		return b.send(ctx, m.Chat.ID, "发送 /adduser <统一入口 tag> <用户名称> <出站 tag> [UUID]；旧入站不会自动合并。", back())
+		*st = pending{Mode: "entry-input-add", Version: configVersion(d), ChatID: m.Chat.ID, MessageID: m.ID, Until: time.Now().Add(5 * time.Minute)}
+		if b.Forward != nil {
+			b.Forward.Cancel(m.From.ID)
+		}
+		return b.API.Edit(ctx, m.Chat.ID, m.ID, "输入：用户名称 出站tag [UUID]（例如 zs direct）。多个统一入口时请使用 /adduser <统一入口tag> <名称> <出站> [UUID]。", tg.K([]tg.Button{tg.B("返回用户", "user:list")}), false)
 	}
 	p := strings.Split(cb, ":")
 	if len(p) != 4 || p[2] != st.Token || st.Token == "" || time.Now().After(st.Until) || st.ChatID != m.Chat.ID || (st.MessageID != 0 && st.MessageID != m.ID) {
@@ -78,6 +88,35 @@ func (b *Bot) userCallback(ctx context.Context, m tg.Message, d Doc, cb string, 
 		return errors.New("配置已变化，请重新打开入站用户绑定菜单")
 	}
 	switch p[1] {
+	case "detail":
+		if ref(st.User) != p[3] {
+			return errors.New("用户会话无效")
+		}
+		u, ok := findUser(d, st.User)
+		if !ok {
+			return errors.New("用户不存在")
+		}
+		st.Mode = "user-detail"
+		return b.userDetail(ctx, m, d, u, st)
+	case "outlistpage":
+		if st.Mode != "out-list" {
+			return errors.New("会话已过期")
+		}
+		page, e := callbackPage(p[3])
+		if e != nil {
+			return e
+		}
+		return b.outboundPage(ctx, m, d, st, page)
+	case "outinfo":
+		return b.API.Edit(ctx, m.Chat.ID, m.ID, "通过「出站 IP 绑定」先选择 UUID，再检测目标出站实际 IP 并确认保存。", tg.K([]tg.Button{tg.B("选择用户", "user:list"), tg.B("返回", "unified:outbounds")}), false)
+	case "toggle", "remove", "removeok", "share", "policy":
+		return b.userAction(ctx, m, d, p, st)
+	case "outpage":
+		page, e := strconv.Atoi(p[3])
+		if e != nil || page < 0 || st.Mode != "user-out" {
+			return errors.New("页码或会话无效")
+		}
+		return b.outboundPage(ctx, m, d, st, page)
 	case "noop":
 		return nil
 	case "history":
@@ -110,36 +149,26 @@ func (b *Bot) userCallback(ctx context.Context, m tg.Message, d Doc, cb string, 
 		st.Mode = "user-detail"
 		st.User = u.Key
 		st.MessageID = m.ID
-		return b.API.Edit(ctx, m.Chat.ID, m.ID, "用户 "+u.Name+"\nUUID "+u.UUID+"\n当前出站 "+u.Outbound, tg.K([]tg.Button{tg.B("更换出站", "user:change:"+st.Token+":"+ref(u.Key)), tg.B("返回列表", fmt.Sprintf("user:page:%s:%d", st.Token, st.Page)), tg.B("取消", "cancel")}), false)
+		return b.userDetail(ctx, m, d, u, st)
 	case "change":
 		if st.Mode != "user-detail" || st.MessageID != m.ID || ref(st.User) != p[3] {
 			return errors.New("请先选择 UUID")
 		}
 		st.Mode = "user-out"
 		st.Healthy = map[string]string{}
-		k := tg.K()
 		for _, raw := range list(d["outbounds"]) {
-			out := obj(raw)
-			tag := str(out["tag"])
+			o := obj(raw)
+			tag := str(o["tag"])
 			if tag == ManagedBlock || managedUserOutbound(tag) {
 				continue
 			}
-			address := str(out["server"])
+			address := str(o["server"])
 			if address == "" {
 				address = "本机出口"
 			}
-			if b.Config.Probe != nil {
-				var err error
-				address, err = b.Config.Probe(ctx, d, tag)
-				if err != nil {
-					continue
-				}
-			}
 			st.Healthy[tag] = address
-			k.Rows = append(k.Rows, []tg.Button{tg.B(tag+" · "+address, "user:out:"+st.Token+":"+ref(tag))})
 		}
-		k.Rows = append(k.Rows, []tg.Button{tg.B("取消", "cancel")})
-		return b.API.Edit(ctx, m.Chat.ID, m.ID, "选择健康出站及实际出口 IP：", k, false)
+		return b.outboundPage(ctx, m, d, st, 0)
 	case "out":
 		if st.Mode != "user-out" || st.MessageID != m.ID {
 			return errors.New("请先选择 UUID")
@@ -153,6 +182,13 @@ func (b *Bot) userCallback(ctx context.Context, m tg.Message, d Doc, cb string, 
 		}
 		if out == "" || st.Healthy[out] == "" {
 			return errors.New("出站不存在")
+		}
+		if b.Config.Probe != nil {
+			ip, e := b.Config.Probe(ctx, d, out)
+			if e != nil {
+				return errors.New("目标出站检测失败，请选择其他出站")
+			}
+			st.Healthy[out] = ip
 		}
 		st.Outbound = out
 		st.Mode = "user-confirm"
@@ -207,59 +243,4 @@ func (b *Bot) userCallback(ctx context.Context, m tg.Message, d Doc, cb string, 
 		return b.userPage(ctx, m, d, st, page, true)
 	}
 	return errors.New("未知用户操作")
-}
-
-func (b *Bot) unifiedMenu(ctx context.Context, m tg.Message, d Doc, cb string, st *pending) error {
-	if cb == "unified:menu" {
-		return b.send(ctx, m.Chat.ID, "🌐 统一入口管理", tg.K(
-			[]tg.Button{tg.B("🔗 UUID 出站绑定", "user:list")},
-			[]tg.Button{tg.B("🌍 出站 IP 管理", "unified:outbounds")},
-			[]tg.Button{tg.B("👥 入站用户管理", "user:list")},
-			[]tg.Button{tg.B("📊 绑定状态", "unified:status")},
-			[]tg.Button{tg.B("⚙️ REALITY 设置", "unified:reality")},
-			[]tg.Button{tg.B("⬅️ 返回", "panel")}))
-	}
-	k := tg.K([]tg.Button{tg.B("⬅️ 返回", "unified:menu")})
-	lines := []string{}
-	switch cb {
-	case "unified:status":
-		for _, u := range UnifiedUsers(d) {
-			lines = append(lines, u.Name+" · "+u.UUID+" → "+u.Outbound)
-		}
-	case "unified:outbounds":
-		for _, raw := range list(d["outbounds"]) {
-			o := obj(raw)
-			tag := str(o["tag"])
-			if tag == ManagedBlock || managedUserOutbound(tag) {
-				continue
-			}
-			ip := "未验证"
-			if b.Config.Probe != nil {
-				var err error
-				ip, err = b.Config.Probe(ctx, d, tag)
-				if err != nil {
-					ip = "暂不可用"
-				}
-			}
-			lines = append(lines, tag+" · "+ip)
-		}
-		k.Rows = append([][]tg.Button{{tg.B("添加出站", "out:add"), tg.B("删除出站", "delete:start")}}, k.Rows...)
-	case "unified:reality":
-		for _, raw := range list(d["inbounds"]) {
-			in := obj(raw)
-			if !isUnified(in) {
-				continue
-			}
-			tls := obj(in["tls"])
-			r := obj(tls["reality"])
-			h := obj(r["handshake"])
-			lines = append(lines, str(in["tag"])+"\nVLESS · TCP · xtls-rprx-vision\n公网 TCP "+strconv.Itoa(b.Config.UnifiedPublicPort)+"\n内部 "+str(in["listen"])+":"+str(in["listen_port"])+"\nSNI "+str(tls["server_name"])+"\n握手 "+str(h["server"])+":"+str(h["server_port"])+"\n设置由统一 443 配置管理；/share 用户标识 生成链接。")
-		}
-	default:
-		return errors.New("未知统一入口菜单")
-	}
-	if len(lines) == 0 {
-		lines = append(lines, "尚无统一入口用户")
-	}
-	return b.send(ctx, m.Chat.ID, strings.Join(lines, "\n"), k)
 }

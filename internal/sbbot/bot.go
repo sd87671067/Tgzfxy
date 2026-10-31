@@ -75,11 +75,11 @@ func (b *Bot) panel() *tg.Keyboard {
 	return k
 }
 func protocolMenu() *tg.Keyboard {
-	return tg.K([]tg.Button{tg.B("添加 Hysteria 2", "proto:hy2")}, []tg.Button{tg.B("添加 VLESS", "proto:vless"), tg.B("添加 AnyTLS", "proto:anytls")}, []tg.Button{tg.B("添加出站", "out:add"), tg.B("入站绑定出站", "bind:start")}, []tg.Button{tg.B("删除入站/出站", "delete:start"), tg.B("转化链接", "share")}, []tg.Button{tg.B("查看所有入站", "proto:list:0"), tg.B("设置有效期", "proto:exp")}, []tg.Button{tg.B("UUID 用户与出站 IP", "user:list"), tg.B("添加统一用户", "user:add")}, []tg.Button{tg.B("« 返回面板", "panel")})
+	return tg.K([]tg.Button{tg.B("添加 Hysteria 2", "proto:hy2")}, []tg.Button{tg.B("添加 VLESS", "proto:vless"), tg.B("添加 AnyTLS", "proto:anytls")}, []tg.Button{tg.B("添加出站", "out:add"), tg.B("入站绑定出站", "bind:start")}, []tg.Button{tg.B("删除入站/出站", "delete:start"), tg.B("转化链接", "share")}, []tg.Button{tg.B("查看所有入站", "proto:list:0"), tg.B("设置有效期", "proto:exp")}, []tg.Button{tg.B("« 返回面板", "panel")})
 }
 func (b *Bot) available(cmd, cb string) bool {
 	feature := ""
-	if slices.Contains(strings.Fields("today month status usage limit block unblock share addout addvless addhy2 addanytls add protocols setexpiry users adduser adopthistory"), cmd) {
+	if slices.Contains(strings.Fields("today month status usage limit alllimit block unblock share addout addvless addhy2 addanytls add protocols setexpiry users adduser adopthistory"), cmd) {
 		feature = "singbox"
 	}
 	if cmd == "ufw" || strings.HasPrefix(cb, "ufw:") {
@@ -88,7 +88,7 @@ func (b *Bot) available(cmd, cb string) bool {
 	if cmd == "bwh" || strings.HasPrefix(cb, "bwh:") {
 		feature = "bwh"
 	}
-	for _, p := range []string{"use:", "proto:", "share", "out:", "bind:", "limit:", "block:", "delete:", "protodel:", "user:", "unified:"} {
+	for _, p := range []string{"use:", "proto:", "share", "out:", "bind:", "limit:", "block:", "delete:", "protodel:", "user:", "unified:", "select:", "traffic:"} {
 		if strings.HasPrefix(cb, p) {
 			feature = "singbox"
 		}
@@ -164,7 +164,9 @@ func (b *Bot) Handle(ctx context.Context, u tg.Update) error {
 		b.States[m.From.ID] = st
 	}
 	var err error
-	if cb != "" {
+	if cb == "" && cmd == "" && strings.HasPrefix(st.Mode, "entry-input-") {
+		err = b.entryInput(ctx, m, st)
+	} else if cb != "" {
 		err = b.callback(ctx, m, cb, st)
 	} else {
 		err = b.command(ctx, m, cmd, args, st)
@@ -187,7 +189,8 @@ func (b *Bot) resolve(d Doc, arg string) string {
 			return str(in["tag"])
 		}
 	}
-	return ""
+	key, _ := resolveUnified(d, arg)
+	return key
 }
 func (b *Bot) usage(ctx context.Context, d Doc, period, target string) (string, error) {
 	now := time.Now().In(b.TZ)
@@ -236,7 +239,7 @@ func gib(s string) (int64, error) {
 func (b *Bot) command(ctx context.Context, m tg.Message, cmd string, args []string, st *pending) error {
 	reply := func(s string) error { return b.send(ctx, m.Chat.ID, s, back()) }
 	if cmd == "help" {
-		return reply("/panel 操作面板\n/users UUID 用户与出站 IP\n/adopthistory 用户标识 旧入口：确认继承历史、额度、到期\n/adduser 统一入口 名称 出站 [UUID]\n/bind 来源 目标：添加转发规则（目标可填 bot）\n/switch [ID] 规则设置\n/cs 分钟 次数：重试冷却与次数\n规则支持实时/轮询、黑白名单、失败关键词、重试、按钮链接、成功通知。\n/today /month /status 流量\n/usage tag\n/limit tag GiB（0 不限）\n/block tag /unblock tag\n/share tag1 tag2\n/addout 添加出站\n/addvless tag [伪装域名] [有效期]\n/addhy2 tag [有效期]\n/addanytls tag [有效期]\n/add tag 有效期 流量G\n/protocols [页码]\n/setexpiry tag 有效期（0 永久；支持 1y/3m/2w/7d）\n/ufw list|allow|delete [端口] [tcp|udp|both]\n/bwh status|transfer|start|stop|reboot|resetpwd|snap|snap_create|snap_delete|snap_restore|logs\n/cancel 取消")
+		return reply("/panel 操作面板\n/users UUID 用户与出站 IP\n/adopthistory 用户标识 旧入口：确认继承历史、额度、到期\n/adduser 统一入口 名称 出站 [UUID]\n/bind 来源 目标：添加转发规则（目标可填 bot）\n/switch [ID] 规则设置\n/cs 分钟 次数：重试冷却与次数\n规则支持实时/轮询、黑白名单、失败关键词、重试、按钮链接、成功通知。\n/today /month /status 流量\n/usage tag\n/alllimit tag [流量MB] [时间day]（默认 512000MB、30天）\n/limit tag GiB（0 不限）\n/block tag /unblock tag\n/share tag1 tag2\n/addout 添加出站\n/addvless tag [伪装域名] [有效期]\n/addhy2 tag [有效期]\n/addanytls tag [有效期]\n/add tag 有效期 流量G\n/protocols [页码]\n/setexpiry tag 有效期（0 永久；支持 1y/3m/2w/7d）\n/ufw list|allow|delete [端口] [tcp|udp|both]\n/bwh status|transfer|start|stop|reboot|resetpwd|snap|snap_create|snap_delete|snap_restore|logs\n/cancel 取消")
 	}
 	if cmd == "bwh" {
 		return b.bwhCommand(ctx, m, args, st)
@@ -332,6 +335,16 @@ func (b *Bot) command(ctx context.Context, m tg.Message, cmd string, args []stri
 			if target == "" {
 				return errors.New("未找到 tag 或端口")
 			}
+		}
+		if target == "" {
+			return b.trafficPage(ctx, m, d, st, period, 0, false)
+		}
+		if u, ok := findUser(d, target); ok {
+			text, e := b.userStatus(ctx, d, u)
+			if e != nil {
+				return e
+			}
+			return reply(text)
 		}
 		text, err := b.usage(ctx, d, period, target)
 		if err != nil {
@@ -430,6 +443,8 @@ func (b *Bot) command(ctx context.Context, m tg.Message, cmd string, args []stri
 			return err
 		}
 		return reply("✅ 已更新 " + tag + "；超额或到期的入站仍将自动暂停。")
+	case "alllimit":
+		return b.allLimit(ctx, m, d, args, st)
 	case "share":
 		if len(args) == 0 {
 			return reply("用法：/share <tag1> [tag2 ...]")
@@ -441,7 +456,7 @@ func (b *Bot) command(ctx context.Context, m tg.Message, cmd string, args []stri
 		if err = b.Store.Log(ctx, actor, "share", strings.Join(args, ",")); err != nil {
 			return err
 		}
-		return reply(strings.Join(links, "\n\n"))
+		return b.send(ctx, m.Chat.ID, strings.Join(links, "\n\n"), tg.K([]tg.Button{tg.B("复制说明", "unified:copy"), tg.B("返回用户", "user:list")}))
 	case "protocols":
 		page := 0
 		if len(args) > 0 {

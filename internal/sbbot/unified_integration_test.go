@@ -330,6 +330,50 @@ func TestUnifiedRealSingBoxRealityVisionRoutingAccountingRollback(t *testing.T) 
 	if out, e := curl(1, "http://probe.invalid/"); e != nil || out != "exit-B" {
 		t.Fatal("pause leaked to other user", e)
 	}
+	// Exercise the new lifetime cycle against actual REALITY connections.
+	SetBlockedDoc(d, map[string]bool{})
+	if e = b.Config.ApplyUnified(context.Background(), d); e != nil {
+		t.Fatal(e)
+	}
+	ctx := context.Background()
+	if e = b.Store.SetCycle(ctx, users[0].Key, 1024, 7, func() error { return b.enforce(ctx, d) }); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = b.Store.DB.Exec("INSERT INTO samples VALUES(?,?,?)", time.Now().Unix(), users[0].Key, 1024); e != nil {
+		t.Fatal(e)
+	}
+	if e = b.enforce(ctx, d); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = curl(0, "http://probe.invalid/"); e == nil {
+		t.Fatal("cycle exhausted user connected")
+	}
+	if out, e := curl(1, "http://probe.invalid/"); e != nil || out != "exit-B" {
+		t.Fatal("cycle block affected other UUID", e)
+	}
+	if e = b.Store.SetCycle(ctx, users[0].Key, 4096, 7, func() error { return b.enforce(ctx, d) }); e != nil {
+		t.Fatal(e)
+	}
+	if out, e := curl(0, "http://probe.invalid/"); e != nil || out != "exit-B" {
+		t.Fatal("renewed cycle not usable", e)
+	}
+	cycle, e := b.Store.Cycle(ctx, users[0].Key)
+	if e != nil {
+		t.Fatal(e)
+	}
+	cycle.Expires = time.Now().Unix() - 1
+	if e = b.Store.putCycle(ctx, users[0].Key, cycle); e != nil {
+		t.Fatal(e)
+	}
+	if e = b.enforce(ctx, d); e != nil {
+		t.Fatal(e)
+	}
+	if _, e = curl(0, "http://probe.invalid/"); e == nil {
+		t.Fatal("cycle expired user connected")
+	}
+	if out, e := curl(1, "http://probe.invalid/"); e != nil || out != "exit-B" {
+		t.Fatal("cycle expiry affected other UUID", e)
+	}
 	// Fail health after a valid real restart, then restore and start the original.
 	before, _ := os.ReadFile(b.Config.Path)
 	run := b.Config.Run
