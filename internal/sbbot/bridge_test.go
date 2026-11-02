@@ -28,8 +28,9 @@ func TestBotBridgeMenuSaveSnapshotRefreshAndFailures(t *testing.T) {
 	received := false
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var v struct {
-			Base, Candidate json.RawMessage
-			Hash            string
+			Base      []byte `json:"base_bytes"`
+			Candidate json.RawMessage
+			Hash      string
 		}
 		if e := json.NewDecoder(r.Body).Decode(&v); e != nil {
 			t.Error(e)

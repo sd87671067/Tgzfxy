@@ -103,7 +103,7 @@ func (c *ConfigManager) bridgeApply(ctx context.Context, d Doc, version, sni, ta
 		return e
 	}
 	h := sha256.Sum256(base)
-	request := map[string]any{"base": json.RawMessage(base), "candidate": json.RawMessage(candidate), "hash": fmt.Sprintf("%x", h), "reality_sni": sni, "tag": tag, "auth_id": user, "expected_ip": ip}
+	request := map[string]any{"base_bytes": base, "candidate": json.RawMessage(candidate), "hash": fmt.Sprintf("%x", h), "reality_sni": sni, "tag": tag, "auth_id": user, "expected_ip": ip}
 	if e = c.BridgeCall(ctx, "/sbbot-apply", request, nil); e != nil {
 		return e
 	}
@@ -118,7 +118,10 @@ func (c *ConfigManager) bridgeApply(ctx context.Context, d Doc, version, sni, ta
 	for k, v := range fresh {
 		d[k] = v
 	}
-	raw, _ := json.Marshal(d)
+	raw, e := baseline(fresh, "")
+	if e != nil {
+		return e
+	}
 	remember(d, raw)
 	return nil
 }
