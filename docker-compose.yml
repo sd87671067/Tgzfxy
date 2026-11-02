@@ -6,10 +6,15 @@ services:
     env_file:
       - .env
     network_mode: host
-    pid: host
-    privileged: true
+    privileged: false
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      SINGBOX_CONTROL_SOCKET: /run/tzsingbox-control/control.sock
+      AUTO_RESTART_SING_BOX: "true"
     volumes:
-      - ${SINGBOX_CONFIG_DIR:-/etc/sing-box}:/config
+      - ${SINGBOX_CONFIG_DIR:-/etc/sing-box}:/config:ro
+      - /run/tzsingbox-control:/run/tzsingbox-control:ro
       - ./data:/data
       - ${CERTS_DIR:-/root/certs}:${CERTS_DIR:-/root/certs}:ro
     logging:

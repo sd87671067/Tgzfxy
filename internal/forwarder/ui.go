@@ -206,6 +206,9 @@ func wordsFor(r Rule, cat string) []string {
 }
 func (e *Engine) Handle(ctx context.Context, m tg.Message, callback, command string, args []string) (handled bool, result error) {
 	defer e.Changed()
+	if strings.HasPrefix(callback, "fw:toggle:") || strings.HasPrefix(callback, "fw:confirm_delete:") {
+		e.interruptWork()
+	}
 	e.Mu.Lock()
 	defer e.Mu.Unlock()
 	defer func() {

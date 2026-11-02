@@ -2,6 +2,7 @@ package forwarder
 
 import (
 	"context"
+	tg "local/bots/internal/telegram"
 	"sync"
 	"testing"
 	"time"
@@ -85,4 +86,41 @@ func TestRetryQueueAndReceiptsSurviveRestart(t *testing.T) {
 	if reopened.Receipts[receiptKey{222, 100}].Key != key {
 		t.Fatal("reply association lost")
 	}
+}
+
+type blockedHistory struct {
+	*fakeTransport
+	started, stopped chan struct{}
+}
+
+func (f *blockedHistory) History(ctx context.Context, _ int64, _ int, _ bool) ([]Message, error) {
+	f.started <- struct{}{}
+	<-ctx.Done()
+	f.stopped <- struct{}{}
+	return nil, ctx.Err()
+}
+func TestForwarderDisableCancelsInFlightHistory(t *testing.T) {
+	e, tr, _ := setup(t)
+	f := &blockedHistory{tr, make(chan struct{}, 2), make(chan struct{}, 2)}
+	e.Transport = f
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := &fakeSession{started: make(chan struct{}, 2), stopped: make(chan struct{}, 2)}
+	done := make(chan struct{})
+	go func() { defer close(done); e.Serve(ctx, s, make(chan Message)) }()
+	waitSignal(t, f.started)
+	m := tg.Message{From: tg.User{ID: 1}, Chat: tg.Chat{ID: 1}}
+	handled, err := e.Handle(ctx, m, "fw:toggle:1", "", nil)
+	if !handled || err != nil {
+		t.Fatal(err)
+	}
+	waitSignal(t, f.stopped)
+	waitSignal(t, s.stopped)
+	select {
+	case <-f.started:
+		t.Fatal("disabled rule polled again")
+	case <-time.After(60 * time.Millisecond):
+	}
+	cancel()
+	waitSignal(t, done)
 }

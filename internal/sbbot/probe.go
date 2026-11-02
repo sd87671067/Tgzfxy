@@ -46,6 +46,9 @@ finally:
 // ProbeTraffic accepts either a real outbound tag or a unified user key. User
 // probes traverse the public SNI listener when UnifiedPublicPort is configured.
 func (c *ConfigManager) ProbeTraffic(ctx context.Context, d Doc, target string) (string, error) {
+	if c.ControlSocket != "" {
+		return c.bridgeProbe(ctx, d, target)
+	}
 	p := Doc{"log": Doc{"level": "error"}, "outbounds": d["outbounds"], "dns": d["dns"], "route": Doc{"final": target, "default_domain_resolver": obj(d["route"])["default_domain_resolver"]}}
 	if _, ok := findUser(d, target); ok {
 		links, err := ShareLinks(d, []string{target}, "127.0.0.1", "", c.UnifiedPublicPort)

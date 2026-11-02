@@ -18,11 +18,17 @@ func (b *Bot) enforceAt(ctx context.Context, d Doc, now time.Time) error {
 	if err != nil {
 		return err
 	}
+	if b.Config.ControlSocket != "" {
+		target = map[string]bool{}
+	}
 	used, err := b.Store.UsageAll(ctx, Month(now.In(b.TZ)))
 	if err != nil {
 		return err
 	}
 	version := configVersion(d)
+	if b.Config.ControlSocket != "" {
+		version = ""
+	}
 	current := Blocked(d)
 	for _, v := range accountingInbounds(d) {
 		tag := str(obj(v)["tag"])
@@ -59,10 +65,19 @@ func (b *Bot) enforceAt(ctx context.Context, d Doc, now time.Time) error {
 			target[legacy] = true
 		}
 	}
-	if maps.Equal(current, target) && (len(target) == 0 || len(UnifiedUsers(d)) > 0 || Kind(d, ManagedBlock) == "outbound") {
+	if b.Config.ControlSocket == "" && maps.Equal(current, target) && (len(target) == 0 || len(UnifiedUsers(d)) > 0 || Kind(d, ManagedBlock) == "outbound") {
 		return nil
 	}
-	SetBlockedDoc(d, target)
+	beforeRules := configVersion(d)
+	if b.Config.ControlSocket != "" {
+		beforeRules = originalVersion(d)
+		setQuotaBlocks(d, target)
+	} else {
+		SetBlockedDoc(d, target)
+	}
+	if configVersion(d) == beforeRules {
+		return nil
+	}
 	if len(UnifiedUsers(d)) > 0 {
 		return b.Config.applyUnifiedVersion(ctx, d, version)
 	}

@@ -140,7 +140,17 @@ func run() error {
 	if err != nil || publicPort < 0 || publicPort > 65535 {
 		return errors.New("UNIFIED_PUBLIC_PORT 必须为 0-65535，0 表示使用监听端口")
 	}
-	config := &sbbot.ConfigManager{Path: path, UnifiedPublicPort: publicPort, Domain: env("SHARE_DOMAIN", ""), Cert: env("ANYTLS_CERT_PATH", ""), Key: env("ANYTLS_KEY_PATH", ""), SNI: env("REALITY_SNI", "itunes.apple.com"), AutoRestart: yes("AUTO_RESTART_SING_BOX", true), Run: sbbot.HostRun}
+	config := &sbbot.ConfigManager{ControlSocket: env("SINGBOX_CONTROL_SOCKET", ""), Path: path, UnifiedPublicPort: publicPort, Domain: env("SHARE_DOMAIN", ""), Cert: env("ANYTLS_CERT_PATH", ""), Key: env("ANYTLS_KEY_PATH", ""), SNI: env("REALITY_SNI", "itunes.apple.com"), AutoRestart: yes("AUTO_RESTART_SING_BOX", true), Run: sbbot.HostRun}
+	if config.ControlSocket != "" {
+		var status struct {
+			Writable bool `json:"writable"`
+		}
+		if e := config.BridgeCall(ctx, "/sbbot-status", map[string]string{}, &status); e != nil {
+			return e
+		}
+		features["singbox"] = status.Writable
+		config.AutoRestart = true
+	}
 	config.Probe = config.ProbeTraffic
 	host, err := sbbot.ResolveShareHost(ctx, env("SHARE_HOST", ""))
 	if err != nil {
@@ -198,6 +208,15 @@ func run() error {
 	}
 	if err = api.Call(ctx, "setChatMenuButton", map[string]any{"menu_button": map[string]string{"type": "commands"}}, nil); err != nil {
 		log.Print("setChatMenuButton failed")
+	}
+	if config.ControlSocket != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if e := bot.WatchConfig(ctx); e != nil && ctx.Err() == nil {
+				log.Print("config display watcher stopped")
+			}
+		}()
 	}
 	interval, _ := strconv.Atoi(env("POLL_SECONDS", "60"))
 	interval = max(15, interval)

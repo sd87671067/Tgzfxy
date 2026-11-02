@@ -1,6 +1,7 @@
 package sbbot
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdh"
 	"crypto/rand"
@@ -71,7 +72,12 @@ func Load(path string) (Doc, error) {
 		return nil, err
 	}
 	var d Doc
-	err = json.Unmarshal(raw, &d)
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	err = dec.Decode(&d)
+	if err == nil {
+		remember(d, raw)
+	}
 	return d, err
 }
 func Kind(d Doc, tag string) string {
@@ -107,7 +113,13 @@ func Bind(d Doc, first, second string) error {
 			continue
 		}
 		in := stringsOf(r["inbound"])
-		if slices.Contains(in, first) {
+		simple := true
+		for key := range r {
+			if !slices.Contains([]string{"inbound", "action", "outbound"}, key) {
+				simple = false
+			}
+		}
+		if slices.Contains(in, first) && simple && (str(r["action"]) == "" || str(r["action"]) == "route") {
 			in = slices.DeleteFunc(in, func(s string) bool { return s == first })
 			if len(in) == 0 {
 				continue
@@ -179,7 +191,20 @@ func Blocked(d Doc) map[string]bool {
 	out := map[string]bool{}
 	for _, v := range list(obj(d["route"])["rules"]) {
 		r := obj(v)
-		if str(r["action"]) == "reject" && len(r) == 3 {
+		if managedQuotaRule(r) {
+			scope := obj(list(r["rules"])[0])
+			for _, u := range UnifiedUsers(d) {
+				if ruleForUser(scope, u) {
+					out[u.Key] = true
+				}
+			}
+			if len(stringsOf(scope["auth_user"])) == 0 {
+				for _, tag := range stringsOf(scope["inbound"]) {
+					out[tag] = true
+				}
+			}
+		}
+		if str(r["action"]) == "reject" {
 			for _, u := range UnifiedUsers(d) {
 				if ruleForUser(r, u) {
 					out[u.Key] = true
@@ -568,6 +593,7 @@ func ShareLinks(d Doc, tags []string, host, domain string, unifiedPort ...int) (
 
 type ConfigManager struct {
 	Path, Domain, Cert, Key, SNI string
+	ControlSocket                string
 	UnifiedPublicPort            int
 	Probe                        func(context.Context, Doc, string) (string, error)
 	RealityCheck                 func(context.Context, string, string, int) error
@@ -620,6 +646,12 @@ func (c *ConfigManager) write(raw []byte) error {
 	return os.Rename(name, c.Path)
 }
 func (c *ConfigManager) Apply(ctx context.Context, d Doc, after func() error) error {
+	if c.ControlSocket != "" {
+		if after != nil {
+			return errors.New("控制模式需要事务内验证，未写入")
+		}
+		return c.bridgeApply(ctx, d, "", "", "", "", "")
+	}
 	if err := NormalizeDirectUsers(d); err != nil {
 		return err
 	}
@@ -753,6 +785,10 @@ func (c *ConfigManager) AddInbound(ctx context.Context, d Doc, kind, tag, sni st
 	p := strconv.Itoa(port)
 	if kind == "hysteria2" {
 		p += "/udp"
+	}
+	if c.ControlSocket != "" {
+		e = c.Apply(ctx, d, nil)
+		return in, e
 	}
 	e = c.Apply(ctx, d, func() error {
 		_, err := c.Run(ctx, "/usr/sbin/ufw", "allow", p, "comment", "sbbot-"+kind+"-"+tag)

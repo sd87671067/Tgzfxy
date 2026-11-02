@@ -122,3 +122,22 @@ Behind HAProxy, set `UNIFIED_PUBLIC_PORT=443` so `/share` uses the public port f
 `SHARE_HOST` 显式配置始终优先，支持公网地址或域名；不配置时通过有超时和响应大小限制的 HTTPS 服务探测公网 IPv4，失败时要求配置，不使用 `hostname -I` 的私网地址。命令、统一入口和菜单复用同一分享地址及链接生成器，保持 VLESS Reality 参数与公开端口行为。
 
 `SINGBOX_API_SECRET` 应使用安全随机源生成至少 32 字节，并与 sing-box 的 `experimental.clash_api.secret` 同步更新；API 只监听 `127.0.0.1:9090`。生产环境文件、数据库、证书、私钥、配置和备份不得提交。历史敏感内容应先撤销凭据，历史改写须单独授权。
+
+
+### Shared sing-box controller
+
+Set `SINGBOX_CONTROL_SOCKET=/run/tzsingbox-control/control.sock` and mount that
+socket directory into the Bot. The tzsingbox controller must support the root-only
+Bot API; it validates the Unix peer UID. Protocol management is detected through
+the controller's writable status rather than nsenter. Keep the existing database,
+Token, UUIDs, REALITY keys, read-only config mount, cap_drop ALL and host-PID
+isolation. No Docker socket, privileged mode or nsenter permissions are needed.
+
+Edits retain their read snapshot/hash and submit only the resulting delta through
+three-way merging against the latest production config. Conflicts request a
+refresh. The shared controller owns check, atomic save, service activation,
+listener/UUID verification and rollback. Open read-only user/traffic panels refresh
+on inotify events; unsaved editors retain their original conflict baseline.
+The original demand-driven channel monitor starts for enabled rules, stops when
+none remain, and cancellation now interrupts in-flight history requests. Bot API
+Updates polling remains independent.

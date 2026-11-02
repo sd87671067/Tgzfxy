@@ -38,8 +38,8 @@ func TestDirectNormalizePersistenceIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if Kind(saved, userOutbound(first.Key)) != "" || Kind(saved, userOutbound(other.Key)) != "" {
-		t.Fatal("direct selector regenerated")
+	if Kind(saved, userOutbound(first.Key)) != "outbound" || Kind(saved, userOutbound(other.Key)) != "" {
+		t.Fatal("unrelated save changed existing aliases")
 	}
 	if configVersion(Doc{"inbounds": saved["inbounds"]}) != identities {
 		t.Fatal("identities changed")

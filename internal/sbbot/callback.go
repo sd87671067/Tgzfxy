@@ -146,6 +146,12 @@ func (b *Bot) callback(ctx context.Context, m tg.Message, cb string, st *pending
 	if err != nil {
 		return err
 	}
+	if b.Config.ControlSocket != "" && st.Version != "" && st.Version != configVersion(d) && (strings.HasPrefix(cb, "select:") || strings.HasPrefix(cb, "bind:") || strings.HasPrefix(cb, "delete:") || strings.HasPrefix(cb, "user:") && cb != "user:list" && !strings.HasPrefix(cb, "user:page:") || strings.HasPrefix(cb, "unified:confirm:")) {
+		d, err = snapshot(st.Version)
+		if err != nil {
+			return err
+		}
+	}
 	if strings.HasPrefix(cb, "select:") {
 		p := strings.Split(cb, ":")
 		if len(p) != 3 || p[1] != st.Token || st.Token == "" || st.ChatID != m.Chat.ID || st.MessageID != m.ID || time.Now().After(st.Until) || st.Version != configVersion(d) {

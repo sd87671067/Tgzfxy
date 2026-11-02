@@ -85,7 +85,14 @@ func (b *Bot) userCallback(ctx context.Context, m tg.Message, d Doc, cb string, 
 		return b.userPage(ctx, m, d, st, page, true)
 	}
 	if st.Version != configVersion(d) {
-		return errors.New("配置已变化，请重新打开入站用户绑定菜单")
+		if b.Config.ControlSocket == "" {
+			return errors.New("配置已变化，请重新打开入站用户绑定菜单")
+		}
+		var e error
+		d, e = snapshot(st.Version)
+		if e != nil {
+			return e
+		}
 	}
 	switch p[1] {
 	case "detail":
@@ -218,19 +225,31 @@ func (b *Bot) userCallback(ctx context.Context, m tg.Message, d Doc, cb string, 
 		if err := BindUser(d, key, out); err != nil {
 			return err
 		}
-		if err := b.Config.applyUnifiedVerified(ctx, d, version, func() error {
-			if b.Config.Probe == nil {
+		apply := func() error {
+			return b.Config.applyUnifiedVerified(ctx, d, version, func() error {
+				if b.Config.Probe == nil {
+					return nil
+				}
+				ip, err := b.Config.Probe(ctx, d, key)
+				if err != nil {
+					return err
+				}
+				if ip != expectedIP {
+					return errors.New("用户实际出口与目标不一致")
+				}
 				return nil
+			})
+		}
+		if b.Config.ControlSocket != "" {
+			apply = func() error {
+				u, ok := findUser(d, key)
+				if !ok {
+					return errors.New("用户不存在")
+				}
+				return b.Config.bridgeApply(ctx, d, version, "", u.Inbound, u.Name, expectedIP)
 			}
-			ip, err := b.Config.Probe(ctx, d, key)
-			if err != nil {
-				return err
-			}
-			if ip != expectedIP {
-				return errors.New("用户实际出口与目标不一致")
-			}
-			return nil
-		}); err != nil {
+		}
+		if err := apply(); err != nil {
 			return err
 		}
 		if err := b.Store.Log(ctx, strconv.FormatInt(m.From.ID, 10), "bind_auth_user", key+" -> "+out); err != nil {

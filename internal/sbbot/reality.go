@@ -137,7 +137,16 @@ func (b *Bot) realityPreview(ctx context.Context, m tg.Message, d Doc, st *pendi
 	if b.Config.Run == nil {
 		return errors.New("未配置宿主机执行器")
 	}
-	hap, e := b.Config.Run(ctx, "/usr/bin/cat", "/etc/haproxy/haproxy.cfg")
+	var hap string
+	if b.Config.ControlSocket != "" {
+		var result struct {
+			Config string `json:"config"`
+		}
+		e = b.Config.BridgeCall(ctx, "/sbbot-haproxy", map[string]string{}, &result)
+		hap = result.Config
+	} else {
+		hap, e = b.Config.Run(ctx, "/usr/bin/cat", "/etc/haproxy/haproxy.cfg")
+	}
 	if e != nil {
 		return e
 	}
@@ -198,6 +207,13 @@ func (b *Bot) realityConfirm(ctx context.Context, m tg.Message, d Doc, cb string
 			h["server"] = host
 			h["server_port"] = port
 		}
+	}
+	if b.Config.ControlSocket != "" {
+		u, _ := findUser(d, probeKey)
+		if e = b.Config.bridgeApply(ctx, d, version, sni, u.Inbound, u.Name, ""); e != nil {
+			return e
+		}
+		return b.API.Edit(ctx, m.Chat.ID, m.ID, "✅ REALITY 与 HAProxy 已校验、应用并验证；UUID 与密钥保留。", tg.K([]tg.Button{tg.B("返回", "unified:menu")}), false)
 	}
 	switched := false
 	e = b.Config.applyUnifiedVerified(ctx, d, version, func() error {

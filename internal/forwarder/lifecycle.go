@@ -12,6 +12,7 @@ type Session interface {
 }
 
 func (e *Engine) Changed() {
+	e.interruptWork()
 	select {
 	case e.Changes <- struct{}{}:
 	default:
@@ -50,13 +51,13 @@ func (e *Engine) Serve(ctx context.Context, session Session, events <-chan Messa
 			case <-workerCtx.Done():
 				return
 			case m := <-events:
-				jobCtx, cancel := context.WithTimeout(workerCtx, 60*time.Second)
+				jobCtx, cancel := e.jobContext(workerCtx)
 				if err := e.Event(jobCtx, m); err != nil && workerCtx.Err() == nil {
 					log.Print("forwarder event failed")
 				}
 				cancel()
 			case <-jobs:
-				jobCtx, cancel := context.WithTimeout(workerCtx, 60*time.Second)
+				jobCtx, cancel := e.jobContext(workerCtx)
 				if err := e.Tick(jobCtx); err != nil && workerCtx.Err() == nil {
 					log.Print("forwarder tick failed")
 				}
@@ -101,6 +102,9 @@ func (e *Engine) Serve(ctx context.Context, session Session, events <-chan Messa
 			case jobs <- struct{}{}:
 			default:
 			}
+		}
+		if !active {
+			e.interruptWork()
 		}
 		if !active && ticker != nil {
 			ticker.Stop()
@@ -167,4 +171,19 @@ func (e *Engine) Serve(ctx context.Context, session Session, events <-chan Messa
 			}
 		}
 	}
+}
+
+func (e *Engine) interruptWork() {
+	e.workMu.Lock()
+	defer e.workMu.Unlock()
+	if e.workCancel != nil {
+		e.workCancel()
+	}
+}
+func (e *Engine) jobContext(parent context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(parent, 60*time.Second)
+	e.workMu.Lock()
+	e.workCancel = cancel
+	e.workMu.Unlock()
+	return ctx, cancel
 }

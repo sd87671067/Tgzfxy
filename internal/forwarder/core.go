@@ -78,6 +78,8 @@ type Delivery struct {
 	Due, SentAt time.Time
 }
 type Engine struct {
+	workMu     sync.Mutex
+	workCancel context.CancelFunc
 	Changes    chan struct{}
 	DB         *sql.DB
 	Transport  Transport

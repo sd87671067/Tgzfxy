@@ -160,36 +160,39 @@ func BindUser(d Doc, key, out string) error {
 		d["outbounds"] = append(outs, Doc{"type": "selector", "tag": alias, "outbounds": []string{out}, "default": out, "interrupt_exist_connections": true})
 	}
 	route := nested(d, "route")
-	var rules []any
-	for _, raw := range list(route["rules"]) {
+	rules := list(route["rules"])
+	for _, raw := range rules {
 		r := obj(raw)
-		if str(r["action"]) == "route" && ruleForUser(r, u) {
+		if !ruleForUser(r, u) || str(r["action"]) != "route" {
 			continue
 		}
-		rules = append(rules, raw)
+		simple := true
+		for k := range r {
+			if !slices.Contains([]string{"inbound", "auth_user", "action", "outbound"}, k) {
+				simple = false
+			}
+		}
+		if simple {
+			r["outbound"] = alias
+			return nil
+		}
 	}
-	// Pauses precede bindings; the unconditional inbound reject stays after bindings.
 	pos := 0
 	for pos < len(rules) && (str(obj(rules[pos])["action"]) == "reject" && len(stringsOf(obj(rules[pos])["auth_user"])) > 0 || str(obj(rules[pos])["outbound"]) == ManagedBlock) {
 		pos++
 	}
-	r := Doc{"inbound": []string{u.Inbound}, "auth_user": []string{u.Name}, "action": "route", "outbound": alias}
-	route["rules"] = slices.Insert(rules, pos, any(r))
+	route["rules"] = slices.Insert(rules, pos, any(Doc{"inbound": []string{u.Inbound}, "auth_user": []string{u.Name}, "action": "route", "outbound": alias}))
 	return nil
 }
 
 // NormalizeDirectUsers only removes the managed, one-target direct aliases.
 // Rebinding each user separately preserves identity, pauses and route ownership.
 func NormalizeDirectUsers(d Doc) error {
-	for _, u := range UnifiedUsers(d) {
-		if u.Outbound == "direct" {
-			if err := BindUser(d, u.Key, "direct"); err != nil {
-				return err
-			}
-		}
-	}
+	// Existing aliases are valid sing-box configuration. Migrate only the target
+	// during an explicit BindUser; saving another entity must leave routes intact.
 	return nil
 }
+
 func validName(s string) bool { return regexp.MustCompile(`^[A-Za-z0-9_-]{1,48}$`).MatchString(s) }
 func canonicalUUID(s string) (string, error) {
 	v := strings.ToLower(strings.ReplaceAll(s, "-", ""))
@@ -392,6 +395,12 @@ func (c *ConfigManager) applyUnifiedVersion(ctx context.Context, d Doc, expected
 	return c.applyUnifiedVerified(ctx, d, expected, nil)
 }
 func (c *ConfigManager) applyUnifiedVerified(ctx context.Context, d Doc, expected string, verify func() error) error {
+	if c.ControlSocket != "" {
+		if verify != nil {
+			return errors.New("控制模式需要事务内验证，未写入")
+		}
+		return c.bridgeApply(ctx, d, expected, "", "", "", "")
+	}
 	if !c.AutoRestart || c.Run == nil {
 		return errors.New("统一用户变更需要启用配置检查与 sing-box 重载；未写入配置")
 	}

@@ -131,15 +131,11 @@ func (b *Bot) userAction(ctx context.Context, m tg.Message, d Doc, p []string, s
 		return b.userPage(ctx, m, d, st, page, true)
 	case "toggle":
 		st.Token = ""
-		manual, e := b.Store.Manual(ctx)
-		if e != nil {
-			return e
-		}
 		cmd := "block"
-		if manual[u.Key] {
+		if Blocked(d)[u.Key] {
 			cmd = "unblock"
 		}
-		if e = b.command(ctx, m, cmd, []string{u.Key}, st); e != nil {
+		if e := b.command(ctx, m, cmd, []string{u.Key}, st); e != nil {
 			return e
 		}
 		fresh, e := Load(b.Config.Path)
@@ -249,7 +245,13 @@ func (b *Bot) entryInput(ctx context.Context, m tg.Message, st *pending) error {
 		return e
 	}
 	if configVersion(d) != st.Version {
-		return errors.New("配置已变化，请重新打开菜单")
+		if b.Config.ControlSocket == "" {
+			return errors.New("配置已变化，请重新打开菜单")
+		}
+		d, e = snapshot(st.Version)
+		if e != nil {
+			return e
+		}
 	}
 	if st.Mode == "entry-input-add" {
 		var inbound string

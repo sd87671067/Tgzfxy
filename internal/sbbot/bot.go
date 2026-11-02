@@ -419,6 +419,9 @@ func (b *Bot) command(ctx context.Context, m tg.Message, cmd string, args []stri
 					delete(manual, legacy)
 				}
 			}
+			if b.Config.ControlSocket != "" {
+				setManualPause(d, tag, cmd == "block")
+			}
 			if err = b.Store.SetManual(ctx, manual); err != nil {
 				return err
 			}
